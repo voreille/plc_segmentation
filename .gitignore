@@ -90,14 +90,10 @@ target/
 # Mypy cache
 .mypy_cache/
 
-src/features/QuantImage/
-.Rproj.user
-reports/results_visu/values_p88_s180t225.npy
-models/model_jnm/log_reg_withoutglm_without_penalty.pkl
 *.npy
 *.pkl
 
-models/
+/models/
 
 logs/
 my_dir/
