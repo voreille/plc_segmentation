@@ -5,19 +5,22 @@ from numpy.random import randint
 from src.data.data_augmentation import random_rotate
 
 
-def get_tf_data(file,
-                clinical_df,
-                output_shape_image=(256, 256),
-                random_slice=True,
-                center_on="GTVt",
-                random_shift=None,
-                num_parallel_calls=None,
-                oversample=False,
-                patient_list=None,
-                random_angle=None,
-                shuffle=False,
-                return_complete_gtvl=False,
-                return_patient_name=False):
+def get_tf_data(
+    file,
+    clinical_df,
+    output_shape_image=(256, 256),
+    random_slice=True,
+    center_on="GTVt",
+    random_shift=None,
+    num_parallel_calls=None,
+    oversample=False,
+    patient_list=None,
+    random_angle=None,
+    shuffle=False,
+    return_complete_gtvl=False,
+    return_patient_name=False,
+    ct_clipping=[-1350, 150],
+):
     """mask: mask_gtvt, mask_gtvl, mask_lung1, mask_lung2
 
     Args:
@@ -54,7 +57,7 @@ def get_tf_data(file,
     else:
         patient_ds = tf.data.Dataset.from_tensor_slices(patient_list)
         if shuffle:
-            patient_ds = patient_ds.shuffle()
+            patient_ds = patient_ds.shuffle(150)
 
     def f(patient):
         return _parse_image(
@@ -66,6 +69,7 @@ def get_tf_data(file,
             center_on=center_on,
             output_shape_image=output_shape_image,
             return_complete_gtvl=return_complete_gtvl,
+            ct_clipping=ct_clipping,
         )
 
     def tf_parse_image(patient):
@@ -107,6 +111,8 @@ def _parse_image(
     image = file[patient]["image"][()]
     mask = file[patient]["mask"][()]
     n_slices = image.shape[2]
+    # pet_mean = np.mean(image[..., 1])
+    # pet_std = np.std(image[..., 1])
 
     bb_lung = get_bb_mask_voxel(mask[..., 2] + mask[..., 3])
     center = ((bb_lung[:3] + bb_lung[3:]) // 2)[:2]
@@ -171,16 +177,28 @@ def _parse_image(
     image = np.squeeze(image[center[0] - r[0]:center[0] + r[0],
                              center[1] - r[1]:center[1] + r[1], s, :])
 
-    image = preprocess_image(image, ct_clipping=ct_clipping)
+    image = preprocess_image(
+        image,
+        ct_clipping=ct_clipping,
+        #  pet_mean=pet_mean,
+        # pet_std=pet_std,
+    )
 
     return image, final_mask
 
 
-def preprocess_image(image, ct_clipping=[-1350, 150]):
+def preprocess_image(
+    image,
+    ct_clipping=[-1350, 150],
+    # pet_mean=0.0,
+    # pet_std=1.0,
+):
     ct = image[..., 0]
     ct[ct < ct_clipping[0]] = ct_clipping[0]
     ct[ct > ct_clipping[1]] = ct_clipping[1]
-    ct = (ct - ct_clipping[0]) / (ct_clipping[1] - ct_clipping[0])
+    ct = (2 * ct - ct_clipping[1] - ct_clipping[0]) / (ct_clipping[1] -
+                                                       ct_clipping[0])
+    # image[..., 1] = (image[..., 1] - pet_mean) / pet_std
     image[..., 0] = ct
     return image
 

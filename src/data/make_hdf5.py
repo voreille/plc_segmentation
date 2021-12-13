@@ -11,8 +11,10 @@ dotenv_path = project_dir / ".env"
 path_data_nii = project_dir / "data/interim/nii_resampled"
 path_mask_lung_nii = project_dir / "data/interim/nii_resampled"
 
-path_output = project_dir / "data/processed/hdf5_2d_complete"
+only_gtv_slice = True
+standardize_method_pet = "only-lung-slices"
 
+path_output = project_dir / "data/processed/hdf5_2d_pet_standardized_lung_slices"
 path_output.mkdir(parents=True, exist_ok=True)
 
 
@@ -27,7 +29,12 @@ def main():
     hdf5_file = h5py.File(path_file, 'a')
     for patient in tqdm(patient_list):
 
-        image, mask = parse_image(patient, path_data_nii, path_mask_lung_nii, only_gtv_slices=False)
+        image, mask = parse_image(
+            patient,
+            path_data_nii,
+            path_mask_lung_nii,
+            only_gtv_slices=only_gtv_slice,
+            standardize_method_pet=standardize_method_pet)
 
         hdf5_file.create_group(f"{patient}")
         hdf5_file.create_dataset(f"{patient}/image",
@@ -82,10 +89,23 @@ def slice_volumes(*args, s1=0, s2=-1):
     return output
 
 
-def standardize(image, mask):
+def standardize_within_mask(image, mask):
     values = image[mask != 0]
     std = np.std(values)
     m = np.mean(values)
+    return (image - m) / std
+
+
+def standardize_containing_slices(image, mask):
+    bb = get_bb_mask_voxel(mask)
+    std = np.std(image[:, :, bb[2]:bb[-1]])
+    m = np.mean(image[:, :, bb[2]:bb[-1]])
+    return (image - m) / std
+
+
+def standardize(image):
+    std = np.std(image)
+    m = np.mean(image)
     return (image - m) / std
 
 
@@ -106,14 +126,13 @@ def split_lung_mask(lung_sitk):
     return lung1, lung2
 
 
-def parse_image(
-    patient_name,
-    path_nii,
-    path_lung_mask_nii,
-    mask_smoothing=False,
-    smoothing_radius=3,
-    only_gtv_slices=False,
-):
+def parse_image(patient_name,
+                path_nii,
+                path_lung_mask_nii,
+                mask_smoothing=False,
+                smoothing_radius=3,
+                only_gtv_slices=False,
+                standardize_method_pet="full-image"):
     """Parse the raw data of HECKTOR 2020
 
     Args:
@@ -150,7 +169,17 @@ def parse_image(
 
     ct = to_np(ct_sitk)
     pt = to_np(pt_sitk)
-    pt = standardize(pt, mask_lung1 + mask_lung2)
+    if standardize_method_pet == "within-lung":
+        pt = standardize_within_mask(pt, mask_lung1 + mask_lung2)
+    elif standardize_method_pet == "full-image":
+        pt = standardize(pt)
+    elif standardize_method_pet == "only-lung-slices":
+        pt = standardize_containing_slices(pt, mask_lung1 + mask_lung2)
+    elif standardize_method_pet == "None":
+        pass
+    else:
+        raise ValueError(
+            f"the method {standardize_method_pet} is not defined.")
 
     if only_gtv_slices:
         bb_gtvt = get_bb_mask_voxel(mask_gtvt)

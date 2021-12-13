@@ -16,41 +16,32 @@ from src.models.callbacks import EarlyStopping
 
 DEBUG = False
 
-w_gtvl = 105
-w_background = 0.5
-
 project_dir = Path(__file__).resolve().parents[2]
 splits_path = project_dir / "data/splits.json"
-oversample = True
+oversample = False
 
 if DEBUG:
     EPOCHS = 3
 else:
     EPOCHS = 400
 
-
-def loss(y_true, y_pred):
-    l = tf.keras.losses.binary_crossentropy(
-        tf.expand_dims(y_true[..., 1], axis=-1),
-        tf.expand_dims(y_pred[..., 0], axis=-1))
-    l *= y_true[..., 3]
-    w = y_true[..., 1] * w_gtvl + (1 - y_true[..., 1]) * w_background
-    n_elems = tf.reduce_sum(y_true[..., 3], axis=(1, 2))
-    return tf.reduce_sum(w * l, axis=(1, 2)) / n_elems
+plot_only_gtvl = True
 
 
 @click.command()
 @click.option("--config", type=click.Path(exists=True))
-@click.option("--upsampling-kind", type=click.STRING, default="upsampling")
-@click.option("--split", type=click.INT, default=0)
-@click.option("--alpha", type=click.FLOAT, default=0.25)
+@click.option("--upsampling-kind", type=click.STRING, default="trans_conv")
+@click.option("--split", type=click.INT, default=1)
+@click.option("--alpha", type=click.FLOAT, default=0.9)
 @click.option("--gpu-id", type=click.STRING, default="0")
 @click.option("--random-angle", type=click.FLOAT, default=None)
 @click.option("--random-shift", type=click.INT, default=None)
 def main(config, upsampling_kind, split, alpha, gpu_id, random_angle,
          random_shift):
     os.environ["CUDA_VISIBLE_DEVICES"] = gpu_id
-    h5_file = h5py.File(project_dir / "data/processed/hdf5_2d/data.hdf5", "r")
+    h5_file = h5py.File(
+        project_dir /
+        "data/processed/hdf5_2d_pet_standardized_lung_slices/data.hdf5", "r")
 
     if oversample:
         steps_per_epoch = 4
@@ -81,13 +72,21 @@ def main(config, upsampling_kind, split, alpha, gpu_id, random_angle,
                          patient_list=ids_val,
                          center_on="GTV L",
                          random_slice=False).batch(4)
+    ids_val_pos = [p for p in ids_val if clinical_df.loc[p, "plc_status"] == 1]
+    ids_val_neg = [p for p in ids_val if clinical_df.loc[p, "plc_status"] == 0]
+    ds_sample = get_tf_data(h5_file,
+                            clinical_df,
+                            patient_list=ids_val_pos[:2] + ids_val_neg[:1],
+                            center_on="special",
+                            random_slice=False).batch(3)
+
     # ds_test = get_tf_data(h5_file,
     #                       clinical_df,
     #                       patient_list=ids_test,
     #                       center_on="GTV L",
     #                       random_slice=False).batch(4)
 
-    sample_images, sample_seg = next(ds_val.take(1).as_numpy_iterator())
+    sample_images, sample_seg = next(ds_sample.take(1).as_numpy_iterator())
     sample_seg = np.stack(
         [sample_seg[..., 0], sample_seg[..., 1], sample_seg[..., -1]], axis=-1)
 
@@ -95,6 +94,7 @@ def main(config, upsampling_kind, split, alpha, gpu_id, random_angle,
     model.compile(
         optimizer=tf.keras.optimizers.Adam(1e-3),
         loss=CustomLoss(alpha=alpha, w_lung=0, w_gtvt=0),
+        run_eagerly=False,
     )
 
     dir_name = ("pretrained_unet__" +
@@ -114,6 +114,9 @@ def main(config, upsampling_kind, split, alpha, gpu_id, random_angle,
         def log_prediction(epoch, logs):
             # Use the model to predict the values from the validation dataset.
             sample_pred = model.predict(sample_images)
+            if plot_only_gtvl:
+                sample_pred[..., 0] = 0
+                sample_pred[..., 2] = 0
 
             # Log the confusion matrix as an image summary.
             with file_writer_image.as_default():

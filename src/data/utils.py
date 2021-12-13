@@ -1,6 +1,10 @@
 from random import shuffle
+from pathlib import Path
 
+import json
 import numpy as np
+
+project_dir = Path(__file__).resolve().parents[2]
 
 
 def get_bb_mask_voxel(mask):
@@ -31,7 +35,7 @@ def get_lung_volume(patient, file, output_shape_image=None):
     return image, mask
 
 
-def get_split(patient_list, clinical_info):
+def generate_split(patient_list, clinical_info):
     """
     The split are 50, 10, 46 for training, val and test
     in the val and test we have 50 - 50 PLC in the train 75 % 
@@ -55,3 +59,13 @@ def get_split(patient_list, clinical_info):
     ids_train = plc_neg_ids[28:] + plc_pos_ids[28:]
 
     return ids_train, ids_val, ids_test
+
+
+def get_split(split, path_json=None):
+    if path_json is None:
+        path_json = project_dir / "data/splits.json"
+    with open(path_json, "r") as f:
+        splits_list = json.load(f)
+
+    return (splits_list[split]["train"], splits_list[split]["val"],
+            splits_list[split]["test"])
