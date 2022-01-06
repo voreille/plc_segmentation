@@ -9,17 +9,16 @@ import tensorflow as tf
 import numpy as np
 from radiomics.featureextractor import RadiomicsFeatureExtractor
 
-from src.models.utils import predict_volume
+from src.models.utils import predict_volume, reshape_image_unet
 from src.models.models import unet_model
-from src.data.tf_data_hdf5 import get_bb_mask_voxel, preprocess_image
+from src.data.tf_data_hdf5 import preprocess_image
 
 project_dir = Path(__file__).resolve().parents[2]
-# model_path = ("/home/valentin/python_wkspce/plc_segmentation"
-#               "/models/pretrained_unet__alpha_0.25__upsampling_upsampling__"
-#               "split_0__oversample_True__rangle_"
-#               "None__rshift_None__20211211-224814/model_weight")
-# model_path = "GroundTruth"
-models_path = project_dir / "models"
+
+model_path = Path(
+    "/home/valentin/python_wkspce/plc_segmentation/models/unet__a_0.75__upsmpl_upsampling__split_0__ovrsmpl_True__con_nothing20211214-104527/"
+)
+models_dir = project_dir / "models"
 params_ct = str(project_dir / "src/features/param_CT.yaml")
 params_pt = str(project_dir / "src/features/param_PT.yaml")
 
@@ -27,7 +26,7 @@ split = 0
 gpu_id = '0'
 only_volume = True
 adjust_input_shape = True
-ct_clipping = [-1350, 150]
+ct_clipping = (-1350, 150)
 
 
 def main():
@@ -36,17 +35,22 @@ def main():
     patient_list = list(h5_file)
     patient_list.remove("PatientLC_63")  # Just one lung
     patient_list.remove("PatientLC_72")  # the same as 70
-
-    for model_path in tqdm(models_path.iterdir()):
+    if model_path is None:
+        model_paths = [
+            p for p in models_dir.iterdir() if "oversample_False" in p.name
+        ]
+    else:
+        model_paths = [model_path]
+    for path in tqdm(model_paths):
         if only_volume:
             process_one_model_only_volume(
-                str(model_path / "model_weight"),
+                str(path / "model_weight"),
                 patient_list,
                 h5_file,
             )
         else:
             process_one_model(
-                str(model_path / "model_weight"),
+                str(path / "model_weight"),
                 patient_list,
                 h5_file,
             )
@@ -131,28 +135,6 @@ def append_results(patient_id, result, df):
     output.update({"patient_id": patient_id})
 
     return df.append(output, ignore_index=True)
-
-
-def reshape_image_unet(image, mask_lung, level=5, p_id=""):
-    bb_lung = get_bb_mask_voxel(mask_lung)
-    center = ((bb_lung[:3] + bb_lung[3:]) // 2).astype(int)
-    lung_shape = np.abs(bb_lung[3:] - bb_lung[:3])
-    max_shape = np.max(lung_shape[:2])
-    final_shape = max_shape + 2**level - max_shape % 2**level
-    radius = int(final_shape // 2)
-    image_cropped = image[center[0] - radius:center[0] + radius,
-                          center[1] - radius:center[1] + radius, :, :]
-    min_shape = np.min(image_cropped.shape[:2])
-    if min_shape < final_shape:  # Maybe do some recursion
-        final_shape = min_shape - min_shape % 2**level
-        print(
-            f"THE PATIENT {p_id} has some weird shape going on: {image.shape}")
-
-        radius = int(final_shape // 2)
-        image_cropped = image[center[0] - radius:center[0] + radius,
-                              center[1] - radius:center[1] + radius, :, :]
-
-    return image_cropped
 
 
 if __name__ == '__main__':

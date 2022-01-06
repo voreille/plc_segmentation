@@ -18,8 +18,8 @@ def get_tf_data(
     random_angle=None,
     shuffle=False,
     return_complete_gtvl=False,
-    return_patient_name=False,
     ct_clipping=[-1350, 150],
+    n_channels=3,
 ):
     """mask: mask_gtvt, mask_gtvl, mask_lung1, mask_lung2
 
@@ -70,26 +70,36 @@ def get_tf_data(
             output_shape_image=output_shape_image,
             return_complete_gtvl=return_complete_gtvl,
             ct_clipping=ct_clipping,
+            n_channels=n_channels,
         )
 
     def tf_parse_image(patient):
-        image, mask = tf.py_function(f, [patient], [tf.float32, tf.float32])
-        image.set_shape(output_shape_image + (3, ))
+        image, mask, plc_status = tf.py_function(
+            f, [patient], [tf.float32, tf.float32, tf.float32])
+        image.set_shape(output_shape_image + (n_channels, ))
         if return_complete_gtvl:
             mask.set_shape(output_shape_image[:2] + (5, ))
         else:
             mask.set_shape(output_shape_image[:2] + (4, ))
-        return image, mask
+        # plc_status.set_shape((1, ))
+        return image, mask, plc_status
 
-    out_ds = patient_ds.map(tf_parse_image,
+    out_ds = patient_ds.map(lambda p: (*tf_parse_image(p), p),
                             num_parallel_calls=num_parallel_calls)
     if random_angle:
         out_ds = out_ds.map(
-            lambda x, y: random_rotate(x, y, angle=random_angle),
+            lambda x, y, plc_status, patient:
+            (*random_rotate(x, y, angle=random_angle), plc_status, patient),
             num_parallel_calls=num_parallel_calls)
-    if return_patient_name:
-        out_ds = tf.data.Dataset.zip(
-            (out_ds, patient_ds)).map(lambda x, y: (*x, y))
+
+    # if not return_plc_status:
+    #     out_ds = out_ds.map(lambda x, y, plc_status, p: (x, y, p))
+
+    # if not return_patient_name:
+    #     out_ds = out_ds.map(lambda x: x[:-2])
+
+    # if not return_mask:
+    #     out_ds = out_ds.map(lambda x: (x[0], ) + (x[2:]))
 
     return out_ds
 
@@ -104,6 +114,7 @@ def _parse_image(
     output_shape_image=None,
     return_complete_gtvl=None,
     ct_clipping=[-1350, 150],
+    n_channels=3,
 ):
     patient = patient.numpy().decode("utf-8")
     sick_lung_axis = int(clinical_df.loc[patient, "sick_lung_axis"])
@@ -120,9 +131,9 @@ def _parse_image(
     bb_gtvt = get_bb_mask_voxel(mask[..., 0])
     if random_slice:
         # s = randint(bb_gtvt[2] + 1, bb_gtvt[5] - 1)
-        if center_on == "GTV T":
+        if center_on == "GTVt":
             s = randint(bb_gtvt[2] + 1, bb_gtvt[5] - 1)
-        elif center_on == "GTV L":
+        elif center_on == "GTVl":
             s = randint(bb_gtvl[2] + 1, bb_gtvl[5] - 1)
         elif center_on == "nothing":
             s = randint(1, n_slices - 1)
@@ -134,9 +145,9 @@ def _parse_image(
         else:
             raise ValueError("Wrong value for center_on argument")
     else:
-        if center_on == "GTV T":
+        if center_on == "GTVt":
             s = (bb_gtvt[5] + bb_gtvt[2]) // 2
-        elif center_on == "GTV L":
+        elif center_on == "GTVl":
             s = (bb_gtvl[5] + bb_gtvl[2]) // 2
         elif center_on == "nothing":
             s = n_slices // 2
@@ -175,7 +186,8 @@ def _parse_image(
         final_mask = np.concatenate(
             [final_mask, mask[..., 1][..., np.newaxis]], axis=-1)
     image = np.squeeze(image[center[0] - r[0]:center[0] + r[0],
-                             center[1] - r[1]:center[1] + r[1], s, :])
+                             center[1] - r[1]:center[1] + r[1],
+                             s, :n_channels])
 
     image = preprocess_image(
         image,
@@ -184,22 +196,21 @@ def _parse_image(
         # pet_std=pet_std,
     )
 
-    return image, final_mask
+    return image, final_mask, plc_status
 
 
-def preprocess_image(
-    image,
-    ct_clipping=[-1350, 150],
-    # pet_mean=0.0,
-    # pet_std=1.0,
-):
-    ct = image[..., 0]
-    ct[ct < ct_clipping[0]] = ct_clipping[0]
-    ct[ct > ct_clipping[1]] = ct_clipping[1]
-    ct = (2 * ct - ct_clipping[1] - ct_clipping[0]) / (ct_clipping[1] -
-                                                       ct_clipping[0])
-    # image[..., 1] = (image[..., 1] - pet_mean) / pet_std
-    image[..., 0] = ct
+def clip(image, clipping=(-np.inf, np.inf)):
+    image[image < clipping[0]] = clipping[0]
+    image[image > clipping[1]] = clipping[1]
+    image = (2 * image - clipping[1] - clipping[0]) / (clipping[1] -
+                                                       clipping[0])
+    return image
+
+
+def preprocess_image(image, ct_clipping=(-1350, 250), pt_clipping=None):
+    image[..., 0] = clip(image[..., 0], clipping=ct_clipping)
+    if pt_clipping:
+        image[..., 0] = clip(image[..., 1], clipping=pt_clipping)
     return image
 
 

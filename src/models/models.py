@@ -1,5 +1,6 @@
 import tensorflow as tf
 from tensorflow.python.keras.backend import dropout
+from tensorflow.python.training.tracking import base
 from tensorflow_addons.losses import sigmoid_focal_crossentropy
 
 from src.models.layers import ResidualLayer2D
@@ -13,7 +14,6 @@ def upsample(
     filters,
     size,
     kind="trans-conv",
-    batch_norm=True,
 ):
 
     result = tf.keras.Sequential()
@@ -24,41 +24,158 @@ def upsample(
                                             strides=2,
                                             padding='same',
                                             activation="relu"))
+        result.add(tf.keras.layers.Conv2D(filters, size, padding='same'))
     elif kind == "upsampling":
         result.add(tf.keras.layers.UpSampling2D(interpolation="bilinear"))
+        result.add(tf.keras.layers.Conv2D(filters, size, padding='same'))
+    elif kind == "old":
+        result.add(
+            tf.keras.layers.Conv2DTranspose(
+                filters,
+                size,
+                strides=2,
+                padding='same',
+            ))
+
     else:
         raise ValueError(f"{kind} is not handled for the kind of upsampling")
 
-    result.add(tf.keras.layers.Conv2D(filters, size, padding='same'))
-
-    if batch_norm:
-        result.add(tf.keras.layers.BatchNormalization())
+    result.add(tf.keras.layers.BatchNormalization())
 
     result.add(tf.keras.layers.ReLU())
 
     return result
 
 
-def unet_model(output_channels,
-               input_shape=(None, None, 3),
-               upsampling_kind="upsampling"):
+def get_last(filters,
+             size,
+             upsampling_kind="trans-conv",
+             activation="sigmoid"):
+    result = tf.keras.Sequential()
+    if upsampling_kind == "trans_conv":
+        result.add(
+            tf.keras.layers.Conv2DTranspose(filters,
+                                            2,
+                                            strides=2,
+                                            padding='same',
+                                            activation="relu"))
+        result.add(
+            tf.keras.layers.Conv2D(filters,
+                                   size,
+                                   padding='same',
+                                   activation=activation))
+    elif upsampling_kind == "upsampling":
+        result.add(tf.keras.layers.UpSampling2D(interpolation="bilinear"))
+        result.add(
+            tf.keras.layers.Conv2D(filters,
+                                   size,
+                                   padding='same',
+                                   activation=activation))
+    elif upsampling_kind == "old":
+        result.add(
+            tf.keras.layers.Conv2DTranspose(
+                filters,
+                size,
+                strides=2,
+                padding='same',
+                activation=activation,
+            ))
+    return result
+
+
+def downsample(filters, kernel_size, name=""):
+    result = tf.keras.Sequential(
+        [
+            tf.keras.layers.Conv2D(filters, kernel_size, padding='same'),
+            tf.keras.layers.BatchNormalization(),
+            tf.keras.layers.ReLU(),
+            tf.keras.layers.Conv2D(filters, kernel_size, padding='same'),
+            tf.keras.layers.BatchNormalization(),
+            tf.keras.layers.ReLU(),
+            tf.keras.layers.MaxPool2D(padding="same"),
+        ],
+        name=name,
+    )
+    return result
+
+
+def get_decoder(inputs):
+    down_stack = [
+        tf.keras.Sequential(
+            [
+                tf.keras.layers.Conv2D(16, 5, padding="same"),
+                tf.keras.layers.BatchNormalization(),
+                tf.keras.layers.ReLU(),
+                tf.keras.layers.Conv2D(16, 3, padding="same"),
+                tf.keras.layers.BatchNormalization(),
+                tf.keras.layers.ReLU(),
+                downsample(64, 3, name="down_1"),
+            ],
+            name="first_block",
+        ),
+        downsample(128, 3, name="down_2"),
+        downsample(256, 3, name="down_3"),
+        downsample(512, 3, name="down_4"),
+    ]
+
+    x1 = down_stack[0](inputs)
+    x2 = down_stack[1](x1)
+    x3 = down_stack[2](x2)
+    x4 = down_stack[3](x3)
+    return tf.keras.Model(inputs=inputs, outputs=[x1, x2, x3, x4])
+
+
+def classifier_mobilevnet(n_class=1, input_shape=(256, 256, 3)):
+    inputs = tf.keras.layers.Input(shape=(None, None, 3))
     base_model = tf.keras.applications.MobileNetV2(input_shape=input_shape,
                                                    include_top=False)
+    base_model.trainable = False
 
-    # Use the activations of these layers
-    layer_names = [
-        'block_1_expand_relu',  # 64x64
-        'block_3_expand_relu',  # 32x32
-        'block_6_expand_relu',  # 16x16
-        'block_13_expand_relu',  # 8x8
-        'block_16_project',  # 4x4
-    ]
-    layers = [base_model.get_layer(name).output for name in layer_names]
+    last = tf.keras.Sequential([
+        tf.keras.layers.GlobalAveragePooling2D(),
+        tf.keras.layers.Dense(256, activation="relu"),
+        tf.keras.layers.Dropout(0.5),
+        tf.keras.layers.Dense(128, activation="relu"),
+        tf.keras.layers.Dropout(0.5),
+        tf.keras.layers.Dense(16, activation="relu"),
+        tf.keras.layers.Dropout(0.5),
+        tf.keras.layers.Dense(n_class, activation="sigmoid"),
+    ])
 
-    # Create the feature extraction model
-    down_stack = tf.keras.Model(inputs=base_model.input, outputs=layers)
+    inputs = tf.keras.Input(shape=input_shape)
+    middle_output = base_model(inputs)
+    x = last(middle_output)
 
-    down_stack.trainable = False
+    return tf.keras.Model(inputs=inputs, outputs=x)
+
+
+def unet_model(output_channels,
+               input_shape=(None, None, 3),
+               upsampling_kind="upsampling",
+               pretrained=True):
+    if pretrained:
+        inputs = tf.keras.layers.Input(shape=(None, None, 3))
+        base_model = tf.keras.applications.MobileNetV2(input_shape=input_shape,
+                                                       include_top=False)
+
+        # Use the activations of these layers
+        layer_names = [
+            'block_1_expand_relu',  # 64x64
+            'block_3_expand_relu',  # 32x32
+            'block_6_expand_relu',  # 16x16
+            'block_13_expand_relu',  # 8x8
+            'block_16_project',  # 4x4
+        ]
+        layers = [base_model.get_layer(name).output for name in layer_names]
+
+        # Create the feature extraction model
+        down_stack = tf.keras.Model(inputs=base_model.input, outputs=layers)
+        down_stack.trainable = False
+    else:
+        inputs = tf.keras.layers.Input(shape=(None, None, 2))
+        down_stack = get_decoder(inputs)
+        down_stack.trainable = True
+
     up_stack = [
         upsample(512, 3, kind=upsampling_kind),  # 4x4 -> 8x8
         upsample(256, 3, kind=upsampling_kind),  # 8x8 -> 16x16
@@ -66,7 +183,6 @@ def unet_model(output_channels,
         upsample(64, 3, kind=upsampling_kind),  # 32x32 -> 64x64
     ]
 
-    inputs = tf.keras.layers.Input(shape=input_shape)
     x = inputs
 
     # Downsampling through the model
@@ -81,8 +197,10 @@ def unet_model(output_channels,
         x = concat([x, skip])
 
     # This is the last layer of the model
-    last = upsample(output_channels, 3, kind=upsampling_kind, batch_norm=False)
-
+    last = get_last(output_channels,
+                    3,
+                    upsampling_kind=upsampling_kind,
+                    activation="sigmoid")
     x = last(x)
 
     return tf.keras.Model(inputs=inputs, outputs=x)

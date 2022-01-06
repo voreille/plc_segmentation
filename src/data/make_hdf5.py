@@ -11,9 +11,10 @@ dotenv_path = project_dir / ".env"
 path_data_nii = project_dir / "data/interim/nii_resampled"
 path_mask_lung_nii = project_dir / "data/interim/nii_resampled"
 
-only_gtv_slice = True
+only_gtv_slice = False
 standardize_method_pet = "only-lung-slices"
 
+# path_output = project_dir / "data/processed/hdf5_2d"
 path_output = project_dir / "data/processed/hdf5_2d_pet_standardized_lung_slices"
 path_output.mkdir(parents=True, exist_ok=True)
 
@@ -202,7 +203,7 @@ def parse_image(patient_name,
         s2=z_max,
     )
 
-    image = np.stack([ct, pt, np.zeros_like(ct)], axis=-1)
+    image = np.stack([ct, pt], axis=-1)
     mask = np.stack([mask_gtvt, mask_gtvl, mask_lung1, mask_lung2], axis=-1)
 
     mask[mask >= 0.5] = 1
