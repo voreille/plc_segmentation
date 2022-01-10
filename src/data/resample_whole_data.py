@@ -112,6 +112,9 @@ class Resampler():
         mask_gtvl_sitk = sitk.ReadImage(
             str((self.path_nii /
                  (patient_name + "__GTV_L__RTSTRUCT__CT.nii.gz")).resolve()))
+        mask_gtvn_sitk = sitk.ReadImage(
+            str((self.path_nii /
+                 (patient_name + "__GTV_N__RTSTRUCT__CT.nii.gz")).resolve()))
         mask_lung_sitk = sitk.ReadImage(
             str((self.path_nii /
                  (patient_name + "__LUNG__SEG__CT.nii.gz")).resolve()))
@@ -144,6 +147,7 @@ class Resampler():
         resampler.SetInterpolator(sitk.sitkNearestNeighbor)
         mask_gtvt_sitk = resampler.Execute(mask_gtvt_sitk)
         mask_gtvl_sitk = resampler.Execute(mask_gtvl_sitk)
+        mask_gtvn_sitk = resampler.Execute(mask_gtvn_sitk)
         mask_lung_sitk = resampler.Execute(mask_lung_sitk)
 
         sitk.WriteImage(
@@ -160,6 +164,10 @@ class Resampler():
             mask_gtvl_sitk,
             str((self.output_path /
                  (patient_name + "__GTV_L__RTSTRUCT__CT.nii.gz")).resolve()))
+        sitk.WriteImage(
+            mask_gtvn_sitk,
+            str((self.output_path /
+                 (patient_name + "__GTV_N__RTSTRUCT__CT.nii.gz")).resolve()))
         sitk.WriteImage(
             mask_lung_sitk,
             str((self.output_path /

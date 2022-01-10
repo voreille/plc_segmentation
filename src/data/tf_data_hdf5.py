@@ -1,3 +1,7 @@
+"""
+TODO: change how I hande the number of channels
+"""
+
 import tensorflow as tf
 import numpy as np
 from numpy.random import randint

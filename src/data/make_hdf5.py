@@ -151,6 +151,9 @@ def parse_image(patient_name,
     mask_gtvl_sitk = sitk.ReadImage(
         str((path_nii /
              (patient_name + "__GTV_L__RTSTRUCT__CT.nii.gz")).resolve()))
+    mask_gtvn_sitk = sitk.ReadImage(
+        str((path_nii /
+             (patient_name + "__GTV_N__RTSTRUCT__CT.nii.gz")).resolve()))
     mask_lung_sitk = sitk.ReadImage(
         str((path_lung_mask_nii /
              (patient_name + "__LUNG__SEG__CT.nii.gz")).resolve()))
@@ -165,6 +168,7 @@ def parse_image(patient_name,
         mask_lung2_sitk = smoother.Execute(mask_lung2_sitk)
     mask_gtvt = to_np(mask_gtvt_sitk)
     mask_gtvl = to_np(mask_gtvl_sitk)
+    mask_gtvn = to_np(mask_gtvn_sitk)
     mask_lung1 = to_np(mask_lung1_sitk)
     mask_lung2 = to_np(mask_lung2_sitk)
 
@@ -192,11 +196,12 @@ def parse_image(patient_name,
         z_max = bb_lung[-1]
         z_min = bb_lung[2]
 
-    ct, pt, mask_gtvt, mask_gtvl, mask_lung1, mask_lung2 = slice_volumes(
+    ct, pt, mask_gtvt, mask_gtvl, mask_gtvn, mask_lung1, mask_lung2 = slice_volumes(
         ct,
         pt,
         mask_gtvt,
         mask_gtvl,
+        mask_gtvn,
         mask_lung1,
         mask_lung2,
         s1=z_min,
@@ -204,7 +209,14 @@ def parse_image(patient_name,
     )
 
     image = np.stack([ct, pt], axis=-1)
-    mask = np.stack([mask_gtvt, mask_gtvl, mask_lung1, mask_lung2], axis=-1)
+    mask = np.stack([
+        mask_gtvt,
+        mask_gtvl,
+        mask_lung1,
+        mask_lung2,
+        mask_gtvn,
+    ],
+                    axis=-1)
 
     mask[mask >= 0.5] = 1
     mask[mask < 0.5] = 0

@@ -1,5 +1,6 @@
 import random
-import copy
+
+import tensorflow as tf
 
 import numpy as np
 try:  # SciPy >= 0.19
@@ -45,13 +46,10 @@ def bezier_curve(points, nTimes=1000):
     return xvals, yvals
 
 
-def nonlinear_transformation(x, prob=0.5):
-    if random.random() >= prob:
-        return x
+def nonlinear_transformation(x):
     points = [[0, 0], [random.random(), random.random()],
               [random.random(), random.random()], [1, 1]]
-    xpoints = [p[0] for p in points]
-    ypoints = [p[1] for p in points]
+
     xvals, yvals = bezier_curve(points, nTimes=100000)
     if random.random() < 0.5:
         # Half change to get flip
@@ -62,100 +60,112 @@ def nonlinear_transformation(x, prob=0.5):
     return nonlinear_x
 
 
-def local_pixel_shuffling(x, prob=0.5):
-    if random.random() >= prob:
-        return x
-    image_temp = copy.deepcopy(x)
-    orig_image = copy.deepcopy(x)
-    _, img_rows, img_cols, img_deps = x.shape
+def local_pixel_shuffling(image, prob=0.5):
+    x_degraded = np.copy(image)
+    x = np.copy(image)
+    img_rows, img_cols, img_deps, n_channels = x.shape
     num_block = 10000
     for _ in range(num_block):
-        block_noise_size_x = random.randint(1, img_rows // 10)
-        block_noise_size_y = random.randint(1, img_cols // 10)
-        block_noise_size_z = random.randint(1, img_deps // 10)
-        noise_x = random.randint(0, img_rows - block_noise_size_x)
-        noise_y = random.randint(0, img_cols - block_noise_size_y)
-        noise_z = random.randint(0, img_deps - block_noise_size_z)
-        window = orig_image[0, noise_x:noise_x + block_noise_size_x,
-                            noise_y:noise_y + block_noise_size_y,
-                            noise_z:noise_z + block_noise_size_z, ]
-        window = window.flatten()
+        block_shape_x = random.randint(1, img_rows // 10)
+        block_shape_y = random.randint(1, img_cols // 10)
+        block_shape_z = random.randint(1, img_deps // 10)
+        origin_x = random.randint(0, img_rows - block_shape_x)
+        origin_y = random.randint(0, img_cols - block_shape_y)
+        origin_z = random.randint(0, img_deps - block_shape_z)
+        window = x[origin_x:origin_x + block_shape_x,
+                   origin_y:origin_y + block_shape_y,
+                   origin_z:origin_z + block_shape_z, :]
+        window = np.reshape(
+            window,
+            [block_shape_x * block_shape_y * block_shape_z, n_channels])
         np.random.shuffle(window)
         window = window.reshape(
-            (block_noise_size_x, block_noise_size_y, block_noise_size_z))
-        image_temp[0, noise_x:noise_x + block_noise_size_x,
-                   noise_y:noise_y + block_noise_size_y,
-                   noise_z:noise_z + block_noise_size_z] = window
-    local_shuffling_x = image_temp
+            (block_shape_x, block_shape_y, block_shape_z, n_channels))
+        x_degraded[origin_x:origin_x + block_shape_x,
+                   origin_y:origin_y + block_shape_y,
+                   origin_z:origin_z + block_shape_z, :] = window
 
-    return local_shuffling_x
+    return x_degraded
 
 
 def image_in_painting(x):
-    _, img_rows, img_cols, img_deps = x.shape
+    img_rows, img_cols, img_deps, n_channels = x.shape
     cnt = 5
+    x_inpainted = np.copy(x)
     while cnt > 0 and random.random() < 0.95:
-        block_noise_size_x = random.randint(img_rows // 6, img_rows // 3)
-        block_noise_size_y = random.randint(img_cols // 6, img_cols // 3)
-        block_noise_size_z = random.randint(img_deps // 6, img_deps // 3)
-        noise_x = random.randint(3, img_rows - block_noise_size_x - 3)
-        noise_y = random.randint(3, img_cols - block_noise_size_y - 3)
-        noise_z = random.randint(3, img_deps - block_noise_size_z - 3)
-        x[:, noise_x:noise_x + block_noise_size_x,
-          noise_y:noise_y + block_noise_size_y,
-          noise_z:noise_z + block_noise_size_z] = np.random.rand(
-              block_noise_size_x,
-              block_noise_size_y,
-              block_noise_size_z,
-          ) * 1.0
+        block_shape_x = random.randint(img_rows // 6, img_rows // 3)
+        block_shape_y = random.randint(img_cols // 6, img_cols // 3)
+        block_shape_z = random.randint(img_deps // 6, img_deps // 3)
+        origin_x = random.randint(3, img_rows - block_shape_x - 3)
+        origin_y = random.randint(3, img_cols - block_shape_y - 3)
+        origin_z = random.randint(3, img_deps - block_shape_z - 3)
+        inpainting_values = np.random.uniform(size=(block_shape_x,
+                                                    block_shape_y,
+                                                    block_shape_z, n_channels))
+
+        x_inpainted[origin_x:origin_x + block_shape_x,
+                    origin_y:origin_y + block_shape_y,
+                    origin_z:origin_z + block_shape_z, :] = inpainting_values
         cnt -= 1
-    return x
+    return x_inpainted
 
 
 def image_out_painting(x):
-    _, img_rows, img_cols, img_deps = x.shape
-    image_temp = copy.deepcopy(x)
-    x = np.random.rand(
-        x.shape[0],
-        x.shape[1],
-        x.shape[2],
-        x.shape[3],
-    ) * 1.0
-    block_noise_size_x = img_rows - random.randint(3 * img_rows // 7,
-                                                   4 * img_rows // 7)
-    block_noise_size_y = img_cols - random.randint(3 * img_cols // 7,
-                                                   4 * img_cols // 7)
-    block_noise_size_z = img_deps - random.randint(3 * img_deps // 7,
-                                                   4 * img_deps // 7)
-    noise_x = random.randint(3, img_rows - block_noise_size_x - 3)
-    noise_y = random.randint(3, img_cols - block_noise_size_y - 3)
-    noise_z = random.randint(3, img_deps - block_noise_size_z - 3)
-    x[:, noise_x:noise_x + block_noise_size_x,
-      noise_y:noise_y + block_noise_size_y, noise_z:noise_z +
-      block_noise_size_z] = image_temp[:, noise_x:noise_x + block_noise_size_x,
-                                       noise_y:noise_y + block_noise_size_y,
-                                       noise_z:noise_z + block_noise_size_z]
+    img_rows, img_cols, img_deps = x.shape[:-1]
+    x_outpainted = np.random.uniform(size=x.shape)
+    block_shape_x = img_rows - random.randint(3 * img_rows // 7,
+                                              4 * img_rows // 7)
+    block_shape_y = img_cols - random.randint(3 * img_cols // 7,
+                                              4 * img_cols // 7)
+    block_shape_z = img_deps - random.randint(3 * img_deps // 7,
+                                              4 * img_deps // 7)
+    origin_x = random.randint(3, img_rows - block_shape_x - 3)
+    origin_y = random.randint(3, img_cols - block_shape_y - 3)
+    origin_z = random.randint(3, img_deps - block_shape_z - 3)
+    x_outpainted[origin_x:origin_x + block_shape_x,
+                 origin_y:origin_y + block_shape_y, origin_z:origin_z +
+                 block_shape_z, :] = x[origin_x:origin_x + block_shape_x,
+                                       origin_y:origin_y + block_shape_y,
+                                       origin_z:origin_z + block_shape_z, :]
     cnt = 4
     while cnt > 0 and random.random() < 0.95:
-        block_noise_size_x = img_rows - random.randint(3 * img_rows // 7,
-                                                       4 * img_rows // 7)
-        block_noise_size_y = img_cols - random.randint(3 * img_cols // 7,
-                                                       4 * img_cols // 7)
-        block_noise_size_z = img_deps - random.randint(3 * img_deps // 7,
-                                                       4 * img_deps // 7)
-        noise_x = random.randint(3, img_rows - block_noise_size_x - 3)
-        noise_y = random.randint(3, img_cols - block_noise_size_y - 3)
-        noise_z = random.randint(3, img_deps - block_noise_size_z - 3)
-        x[:, noise_x:noise_x + block_noise_size_x,
-          noise_y:noise_y + block_noise_size_y, noise_z:noise_z +
-          block_noise_size_z] = image_temp[:, noise_x:noise_x +
-                                           block_noise_size_x,
-                                           noise_y:noise_y +
-                                           block_noise_size_y,
-                                           noise_z:noise_z +
-                                           block_noise_size_z]
+        block_shape_x = img_rows - random.randint(3 * img_rows // 7,
+                                                  4 * img_rows // 7)
+        block_shape_y = img_cols - random.randint(3 * img_cols // 7,
+                                                  4 * img_cols // 7)
+        block_shape_z = img_deps - random.randint(3 * img_deps // 7,
+                                                  4 * img_deps // 7)
+        origin_x = random.randint(3, img_rows - block_shape_x - 3)
+        origin_y = random.randint(3, img_cols - block_shape_y - 3)
+        origin_z = random.randint(3, img_deps - block_shape_z - 3)
+        x_outpainted[origin_x:origin_x + block_shape_x,
+                     origin_y:origin_y + block_shape_y, origin_z:origin_z +
+                     block_shape_z, :] = x[origin_x:origin_x + block_shape_x,
+                                           origin_y:origin_y + block_shape_y,
+                                           origin_z:origin_z +
+                                           block_shape_z, :]
         cnt -= 1
-    return x
+    return x_outpainted
+
+
+def normalize_image_per_channels(image):
+    output_image = np.copy(image)
+    ranges = list()
+    for k in range(image.shape[-1]):
+        im = image[..., k]
+        min_value = np.min(im)
+        max_value = np.max(im)
+        output_image[..., k] = (im - min_value) / (max_value - min_value)
+        ranges.append((min_value, max_value))
+    return output_image, ranges
+
+
+def rerange_image(image, ranges):
+    output_image = np.copy(image)
+    for k, (min_value, max_value) in enumerate(ranges):
+        im = image[..., k]
+        output_image[..., k] = im * (max_value - min_value) + min_value
+    return output_image
 
 
 def degrade_image(
@@ -166,22 +176,44 @@ def degrade_image(
         inpaint_rate=0.1,  # 1 - paint_rate
 ):
 
-    # Autoencoder
-    degraded_image = np.copy(image)
-
-    # Local Shuffle Pixel
-    degraded_image = local_pixel_shuffling(degraded_image, prob=local_rate)
+    image, ranges = normalize_image_per_channels(image)
+    if random.random() <= local_rate:
+        image = local_pixel_shuffling(image)
 
     # Apply non-Linear transformation with an assigned probability
-    degraded_image = nonlinear_transformation(degraded_image, nonlinear_rate)
+    if random.random() < nonlinear_rate:
+        image = nonlinear_transformation(image)
 
     # Inpainting & Outpainting
     if random.random() < paint_rate:
         if random.random() < inpaint_rate:
             # Inpainting
-            degraded_image = image_in_painting(degraded_image)
+            image = image_in_painting(image)
         else:
             # Outpainting
-            degraded_image = image_out_painting(degraded_image)
+            image = image_out_painting(image)
 
-    return degraded_image
+    return rerange_image(image, ranges)
+
+
+def get_tf_degrade_image(
+        local_rate=0.5,
+        nonlinear_rate=0.9,
+        paint_rate=0.9,
+        inpaint_rate=0.1,  # 1 - paint_rate
+):
+    def f(image):
+        return degrade_image(
+            image,
+            local_rate=local_rate,
+            nonlinear_rate=nonlinear_rate,
+            paint_rate=paint_rate,
+            inpaint_rate=inpaint_rate,
+        )
+
+    def tf_f(image):
+        degraded_image = tf.py_function(f, [image], tf.float32)
+        degraded_image.set_shape(image.shape)
+        return degraded_image
+
+    return tf_f

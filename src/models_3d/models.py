@@ -3,6 +3,34 @@ import tensorflow as tf
 from src.models.layers import ResidualLayer3D
 
 
+def get_pretrained_classifier(path=None, encoder_trainable=False):
+    encoder = get_pretrained_encoder(path)
+    encoder.trainable = encoder_trainable
+    return tf.keras.Sequential([
+        encoder,
+        tf.keras.layers.GlobalAveragePooling3D(),
+        tf.keras.layers.Dense(128, activation="relu"),
+        tf.keras.layers.Dropout(0.5),
+        tf.keras.layers.Dense(64, activation="relu"),
+        tf.keras.layers.Dropout(0.5),
+        tf.keras.layers.Dense(1, activation="sigmoid"),
+    ])
+
+
+def get_pretrained_encoder(path=None):
+    model = Unet(output_channels=2, last_activation="linear")
+    model.build(input_shape=(None, None, None, None, 2))
+    if path:
+        pretrained_model = tf.keras.models.load_model(path)
+        model.set_weights(pretrained_model.get_weights())
+    input_tensor = tf.keras.Input(shape=(None, None, None, 2))
+    x = input_tensor
+    for block in model.down_stack:
+        x = block(x)
+
+    return tf.keras.Model(inputs=input_tensor, outputs=x)
+
+
 class Unet(tf.keras.Model):
     def __init__(
         self,
@@ -10,6 +38,8 @@ class Unet(tf.keras.Model):
         last_activation="sigmoid",
     ):
         super().__init__()
+        self.output_channels = output_channels
+        self.last_activation = last_activation
         self.down_stack = [
             self.get_first_block(12),
             self.get_down_block(24),
@@ -19,10 +49,10 @@ class Unet(tf.keras.Model):
         ]
 
         self.up_stack = [
-            UpBlock(96, upsampling_factor=8),
-            UpBlock(48, upsampling_factor=4),
-            UpBlock(24, upsampling_factor=2),
-            UpBlock(24, n_conv=1),
+            UpBlockLight(96),
+            UpBlockLight(48),
+            UpBlockLight(24),
+            UpBlockLight(24, n_conv=1),
         ]
         self.last = tf.keras.Sequential([
             tf.keras.layers.Conv3D(12, 3, activation='relu', padding='SAME'),
@@ -34,20 +64,16 @@ class Unet(tf.keras.Model):
 
     def get_first_block(self, filters):
         return tf.keras.Sequential([
-            ResidualLayer3D(filters, 7, padding='SAME'),
-            ResidualLayer3D(filters, 3, padding='SAME'),
+            ResidualLayer3D(filters, 7, padding='SAME', activation="relu"),
+            ResidualLayer3D(filters, 3, padding='SAME', activation="relu"),
         ])
 
     def get_down_block(self, filters):
         return tf.keras.Sequential([
             tf.keras.layers.MaxPool3D(pool_size=(2, 2, 2), padding='SAME'),
-            ResidualLayer3D(filters, 3, padding='SAME'),
-            ResidualLayer3D(filters, 3, padding='SAME'),
-            ResidualLayer3D(filters, 3, padding='SAME'),
+            ResidualLayer3D(filters, 3, padding='SAME', activation="relu"),
+            ResidualLayer3D(filters, 3, padding='SAME', activation="relu"),
         ])
-
-    def get_encoder(self):
-        pass
 
     def call(self, inputs, training=None):
         x = inputs
@@ -67,6 +93,14 @@ class Unet(tf.keras.Model):
 
         x += tf.add_n(xs_upsampled)
         return self.last(x, training=training)
+
+    def get_config(self):
+        config = super().get_config()
+        config.update({
+            "output_channels": self.output_channels,
+            "last_activation": self.last_activation,
+        })
+        return config
 
 
 class UnetRadiomics(tf.keras.Model):
@@ -131,13 +165,13 @@ class UnetRadiomics(tf.keras.Model):
 
 
 class UpBlock(tf.keras.layers.Layer):
-    def __init__(self,
-                 filters,
-                 *args,
-                 upsampling_factor=1,
-                 filters_output=24,
-                 n_conv=2,
-                 **kwargs):
+    def __init__(
+        self,
+        filters,
+        upsampling_factor=1,
+        filters_output=24,
+        n_conv=2,
+    ):
         super().__init__()
         self.upsampling_factor = upsampling_factor
         self.conv = tf.keras.Sequential()
@@ -175,3 +209,32 @@ class UpBlock(tf.keras.layers.Layer):
             return x, self.upsampling(x)
         else:
             return x
+
+
+class UpBlockLight(tf.keras.layers.Layer):
+    def __init__(
+        self,
+        filters,
+        n_conv=2,
+    ):
+        super().__init__()
+        self.conv = tf.keras.Sequential()
+        for _ in range(n_conv):
+            self.conv.add(
+                tf.keras.layers.Conv3D(filters,
+                                       3,
+                                       padding='SAME',
+                                       activation='relu'), )
+        self.trans_conv = tf.keras.layers.Conv3DTranspose(filters,
+                                                          2,
+                                                          strides=(2, 2, 2),
+                                                          padding='SAME',
+                                                          activation='relu')
+        self.concat = tf.keras.layers.Concatenate()
+
+    def call(self, inputs, training=None):
+        x, skip = inputs
+        x = self.trans_conv(x, training=training)
+        x = self.concat([x, skip])
+        x = self.conv(x, training=training)
+        return x
