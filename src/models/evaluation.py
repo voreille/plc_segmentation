@@ -15,6 +15,7 @@ def evaluate_pred_volume(
     clinical_df,
     ct_clipping=[-1350, 150],
     n_channels=3,
+    multitask=False,
 ):
 
     total_results = pd.DataFrame()
@@ -23,8 +24,16 @@ def evaluate_pred_volume(
         mask = h5_file[p]["mask"][()]
         image = reshape_image_unet(image, mask[..., 2] + mask[..., 3])
         image = preprocess_image(image, ct_clipping=ct_clipping)
-        image = image[..., :n_channels]
-        prediction = predict_volume(image, model)
+        if n_channels == 3:
+            image = np.stack(
+                [
+                    image[..., 0],
+                    image[..., 1],
+                    np.zeros_like(image[..., 0]),
+                ],
+                axis=-1,
+            )
+        prediction = predict_volume(image, model, multitask=multitask)
         prediction = (prediction[:, :, :, 1] > 0.5).astype(int)
         volume = np.sum(prediction)
         total_results = total_results.append(

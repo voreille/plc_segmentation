@@ -4,7 +4,7 @@ import json
 import h5py
 import pandas as pd
 
-from src.data.utils import get_split
+from src.data.utils import generate_split
 
 project_dir = Path(__file__).resolve().parents[2]
 n_rep = 20
@@ -23,11 +23,13 @@ def main():
     patient_list = list(file.keys())
     file.close()
 
+    # remove dupplicata, plc status is ok, but chuv status is not
     patient_list.remove("PatientLC_63")  # Just one lung
-    patient_list.remove("PatientLC_72")  # the same as 70
+    patient_list.remove("PatientLC_71")  # the same as 69
+    patient_list.remove("PatientLC_21")  # the same as 20 
 
     for k in range(n_rep):
-        ids_train, ids_val, ids_test = get_split(patient_list, clinical_df)
+        ids_train, ids_val, ids_test = generate_split(patient_list, clinical_df)
         ids_list.append({
             "train": ids_train,
             "val": ids_val,

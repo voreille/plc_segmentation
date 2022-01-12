@@ -2,9 +2,13 @@ import tensorflow as tf
 import numpy as np
 
 
-def predict_volume(image, model, batch_size=16):
+def predict_volume(image, model, batch_size=16, multitask=False):
+
     prediction = model.predict(np.transpose(image, (2, 0, 1, 3)),
                                batch_size=batch_size)
+    if multitask:
+        prediction = prediction[0]
+
     return np.transpose(prediction, (1, 2, 0, 3))
 
 

@@ -41,9 +41,6 @@ def generate_split(patient_list, clinical_info):
     in the val and test we have 50 - 50 PLC in the train 75 % 
     """
 
-    patient_list.remove("PatientLC_63")  # Just one lung
-    patient_list.remove("PatientLC_72")  # the same as 70
-
     plc_pos_ids = [
         p for p in patient_list if clinical_info.loc[p, "plc_status"] == 1
     ]

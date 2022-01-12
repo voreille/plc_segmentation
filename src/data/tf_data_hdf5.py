@@ -10,20 +10,21 @@ from src.data.data_augmentation import random_rotate
 
 
 def get_tf_data(
-    file,
-    clinical_df,
-    output_shape_image=(256, 256),
-    random_slice=True,
-    center_on="GTVt",
-    random_shift=None,
-    num_parallel_calls=None,
-    oversample=False,
-    patient_list=None,
-    random_angle=None,
-    shuffle=False,
-    return_complete_gtvl=False,
-    ct_clipping=[-1350, 150],
-    n_channels=3,
+        file,
+        clinical_df,
+        output_shape_image=(256, 256),
+        random_slice=True,
+        center_on="GTVt",
+        random_shift=None,
+        num_parallel_calls=None,
+        oversample=False,
+        patient_list=None,
+        random_angle=None,
+        shuffle=False,
+        return_complete_gtvl=False,
+        ct_clipping=(-1350, 150),
+        pt_clipping=(0, 10),
+        n_channels=3,
 ):
     """mask: mask_gtvt, mask_gtvl, mask_lung1, mask_lung2
 
@@ -74,6 +75,7 @@ def get_tf_data(
             output_shape_image=output_shape_image,
             return_complete_gtvl=return_complete_gtvl,
             ct_clipping=ct_clipping,
+            pt_clipping=pt_clipping,
             n_channels=n_channels,
         )
 
@@ -85,9 +87,11 @@ def get_tf_data(
             mask.set_shape(output_shape_image[:2] + (5, ))
         else:
             mask.set_shape(output_shape_image[:2] + (4, ))
-        # plc_status.set_shape((1, ))
+        plc_status.set_shape((1, ))
         return image, mask, plc_status
 
+    if num_parallel_calls is None:
+        num_parallel_calls = tf.data.AUTOTUNE
     out_ds = patient_ds.map(lambda p: (*tf_parse_image(p), p),
                             num_parallel_calls=num_parallel_calls)
     if random_angle:
@@ -109,16 +113,17 @@ def get_tf_data(
 
 
 def _parse_image(
-    patient,
-    clinical_df=None,
-    file=None,
-    random_slice=None,
-    random_shift=None,
-    center_on=None,
-    output_shape_image=None,
-    return_complete_gtvl=None,
-    ct_clipping=[-1350, 150],
-    n_channels=3,
+        patient,
+        clinical_df=None,
+        file=None,
+        random_slice=None,
+        random_shift=None,
+        center_on=None,
+        output_shape_image=None,
+        return_complete_gtvl=None,
+        ct_clipping=(-1350, 150),
+        pt_clipping=(0, 10),
+        n_channels=3,
 ):
     patient = patient.numpy().decode("utf-8")
     sick_lung_axis = int(clinical_df.loc[patient, "sick_lung_axis"])
@@ -190,20 +195,25 @@ def _parse_image(
         final_mask = np.concatenate(
             [final_mask, mask[..., 1][..., np.newaxis]], axis=-1)
     image = np.squeeze(image[center[0] - r[0]:center[0] + r[0],
-                             center[1] - r[1]:center[1] + r[1],
-                             s, :n_channels])
+                             center[1] - r[1]:center[1] + r[1], s, :])
 
     image = preprocess_image(
         image,
         ct_clipping=ct_clipping,
+        pt_clipping=pt_clipping,
         #  pet_mean=pet_mean,
         # pet_std=pet_std,
     )
+    if n_channels == 3:
+        image = np.stack(
+            [image[..., 0], image[..., 1],
+             np.zeros_like(image[..., 0])],
+            axis=-1)
 
-    return image, final_mask, plc_status
+    return image, final_mask, np.array([plc_status])
 
 
-def clip(image, clipping=(-np.inf, np.inf)):
+def clip_standardize(image, clipping=(-np.inf, np.inf)):
     image[image < clipping[0]] = clipping[0]
     image[image > clipping[1]] = clipping[1]
     image = (2 * image - clipping[1] - clipping[0]) / (clipping[1] -
@@ -212,9 +222,9 @@ def clip(image, clipping=(-np.inf, np.inf)):
 
 
 def preprocess_image(image, ct_clipping=(-1350, 250), pt_clipping=None):
-    image[..., 0] = clip(image[..., 0], clipping=ct_clipping)
+    image[..., 0] = clip_standardize(image[..., 0], clipping=ct_clipping)
     if pt_clipping:
-        image[..., 0] = clip(image[..., 1], clipping=pt_clipping)
+        image[..., 1] = clip_standardize(image[..., 1], clipping=pt_clipping)
     return image
 
 

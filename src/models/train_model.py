@@ -10,7 +10,7 @@ import click
 import tensorflow as tf
 
 from src.data.tf_data_hdf5 import get_tf_data
-from src.models.models import unet_model
+from src.models.models import unet_model, unetclassif_model
 from src.models.losses import CustomLoss
 from src.models.callbacks import EarlyStopping
 from src.models.evaluation import evaluate_pred_volume
@@ -32,7 +32,7 @@ plot_only_gtvl = False
 @click.option("--config", type=click.Path(exists=True))
 @click.option("--upsampling-kind", type=click.STRING, default="upsampling")
 @click.option("--split", type=click.INT, default=0)
-@click.option("--alpha", type=click.FLOAT, default=0.75)
+@click.option("--alpha", type=click.FLOAT, default=0.9)
 @click.option("--w-gtvt", type=click.FLOAT, default=0.0)
 @click.option("--w-lung", type=click.FLOAT, default=0.0)
 @click.option("--gpu-id", type=click.STRING, default="0")
@@ -42,13 +42,13 @@ plot_only_gtvl = False
 @click.option("--loss-type", type=click.STRING, default="masked")
 @click.option('--oversample/--no-oversample', default=False)
 @click.option('--pretrained/--no-pretrained', default=True)
+@click.option('--multitask/--no-multitask', default=True)
 def main(config, upsampling_kind, split, alpha, w_gtvt, w_lung, gpu_id,
          random_angle, random_shift, center_on, loss_type, oversample,
-         pretrained):
+         pretrained, multitask):
     os.environ["CUDA_VISIBLE_DEVICES"] = gpu_id
     h5_file = h5py.File(
-        project_dir /
-        "data/processed/hdf5_2d_pet_standardized_lung_slices/data.hdf5", "r")
+        project_dir / "data/processed/hdf5_2d/data_selected_sclices.hdf5", "r")
 
     if not pretrained:
         n_channels = 2
@@ -71,6 +71,10 @@ def main(config, upsampling_kind, split, alpha, w_gtvt, w_lung, gpu_id,
     ids_val = splits_list[split]["val"]
     ids_test = splits_list[split]["test"]
 
+    if multitask:
+        f = lambda x, y, plc_status, patient: (x, (y, plc_status))
+    else:
+        f = lambda x, y, plc_status, patient: (x, y)
     ds_train = get_tf_data(h5_file,
                            clinical_df,
                            patient_list=ids_train,
@@ -79,13 +83,13 @@ def main(config, upsampling_kind, split, alpha, w_gtvt, w_lung, gpu_id,
                            random_angle=random_angle,
                            random_shift=random_shift,
                            center_on=center_on,
-                           n_channels=n_channels).batch(16)
+                           n_channels=n_channels).map(f).batch(16)
     ds_val = get_tf_data(h5_file,
                          clinical_df,
                          patient_list=ids_val,
                          center_on="GTVl",
                          random_slice=False,
-                         n_channels=n_channels).batch(4)
+                         n_channels=n_channels).map(f).batch(4)
     ids_val_pos = [p for p in ids_val if clinical_df.loc[p, "plc_status"] == 1]
     ids_val_neg = [p for p in ids_val if clinical_df.loc[p, "plc_status"] == 0]
     ds_sample = get_tf_data(h5_file,
@@ -93,18 +97,36 @@ def main(config, upsampling_kind, split, alpha, w_gtvt, w_lung, gpu_id,
                             patient_list=ids_val_pos[:2] + ids_val_neg[:1],
                             center_on="GTVt",
                             random_slice=False,
-                            n_channels=n_channels).batch(3)
+                            n_channels=n_channels).map(f).batch(3)
 
-    sample_images, sample_seg = next(ds_sample.take(1).as_numpy_iterator())
+    if multitask:
+        sample_images, sample_outputs = next(
+            ds_sample.take(1).as_numpy_iterator())
+        sample_seg = sample_outputs[0]
+        model = unetclassif_model(3,
+                                  upsampling_kind=upsampling_kind,
+                                  pretrained=pretrained)
+    else:
+        sample_images, sample_seg = next(ds_sample.take(1).as_numpy_iterator())
+        model = unet_model(3,
+                           upsampling_kind=upsampling_kind,
+                           pretrained=pretrained)
+
     sample_seg = np.stack(
         [sample_seg[..., 0], sample_seg[..., 1], sample_seg[..., -1]], axis=-1)
 
-    model = unet_model(3,
-                       upsampling_kind=upsampling_kind,
-                       pretrained=pretrained)
+    losses = [
+        CustomLoss(alpha=alpha,
+                   w_lung=w_lung,
+                   w_gtvt=w_gtvt,
+                   loss_type=loss_type)
+    ]
+    if multitask:
+        losses.append(tf.keras.losses.BinaryCrossentropy())
+
     model.compile(
         optimizer=tf.keras.optimizers.Adam(1e-3),
-        loss=CustomLoss(alpha=alpha, w_lung=w_lung, w_gtvt=w_gtvt, loss_type=loss_type),
+        loss=losses,
         run_eagerly=False,
     )
 
@@ -112,7 +134,7 @@ def main(config, upsampling_kind, split, alpha, w_gtvt, w_lung, gpu_id,
                 f"prtrnd_{pretrained}__a_{alpha}__wt_{w_gtvt}__wl_{w_lung}"
                 f"upsmpl_{upsampling_kind}__" +
                 f"split_{split}__ovrsmpl_{oversample}__" + f"con_{center_on}" +
-                f"ltyp_{loss_type}__" +
+                f"ltyp_{loss_type}__mltsk_{multitask}__" +
                 datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
 
     callbacks = list()
@@ -125,7 +147,11 @@ def main(config, upsampling_kind, split, alpha, w_gtvt, w_lung, gpu_id,
 
         def log_prediction(epoch, logs):
             # Use the model to predict the values from the validation dataset.
-            sample_pred = model.predict(sample_images)
+            if multitask:
+                sample_pred, sample_pred_pstatus = model.predict(sample_images)
+            else:
+                sample_pred = model.predict(sample_images)
+
             if plot_only_gtvl:
                 sample_pred[..., 0] = 0
                 sample_pred[..., 2] = 0
@@ -164,6 +190,21 @@ def main(config, upsampling_kind, split, alpha, w_gtvt, w_lung, gpu_id,
         callbacks=callbacks,
         steps_per_epoch=steps_per_epoch,
     )
+    if multitask:
+        model.trainable = True
+        model.compile(
+            optimizer=tf.keras.optimizers.Adam(1e-5),
+            loss=losses,
+            run_eagerly=False,
+        )
+        model.fit(
+            x=ds_train,
+            epochs=EPOCHS,
+            validation_data=ds_val,
+            callbacks=callbacks,
+            steps_per_epoch=steps_per_epoch,
+        )
+
     model_dir = project_dir / ("models/" + dir_name)
     model_dir.mkdir()
     model.save(model_dir / "model_weight")
@@ -173,6 +214,7 @@ def main(config, upsampling_kind, split, alpha, w_gtvt, w_lung, gpu_id,
         h5_file,
         clinical_df,
         n_channels=n_channels,
+        multitask=multitask,
     )
     roc_val = evaluate_pred_volume(
         model,
@@ -180,6 +222,7 @@ def main(config, upsampling_kind, split, alpha, w_gtvt, w_lung, gpu_id,
         h5_file,
         clinical_df,
         n_channels=n_channels,
+        multitask=multitask,
     )
     print(f"The ROC AUC for the val and "
           f"test are {roc_val} and {roc_test} respectively.")

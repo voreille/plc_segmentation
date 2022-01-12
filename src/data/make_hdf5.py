@@ -11,11 +11,11 @@ dotenv_path = project_dir / ".env"
 path_data_nii = project_dir / "data/interim/nii_resampled"
 path_mask_lung_nii = project_dir / "data/interim/nii_resampled"
 
-only_gtv_slice = False
-standardize_method_pet = "only-lung-slices"
+only_gtv_slice = True
+standardize_method_pet = "None"
 
-# path_output = project_dir / "data/processed/hdf5_2d"
-path_output = project_dir / "data/processed/hdf5_2d_pet_standardized_lung_slices"
+path_output = project_dir / "data/processed/hdf5_2d"
+# path_output = project_dir / "data/processed/hdf5_2d_pet_standardized_lung_slices"
 path_output.mkdir(parents=True, exist_ok=True)
 
 
@@ -24,7 +24,7 @@ def main():
         f.name.split("__")[0] for f in path_mask_lung_nii.rglob("*LUNG*")
     ]
 
-    path_file = ((path_output / 'data.hdf5').resolve())
+    path_file = ((path_output / 'data_selected_sclices.hdf5').resolve())
     if path_file.exists():
         path_file.unlink()  # delete file if exists
     hdf5_file = h5py.File(path_file, 'a')
