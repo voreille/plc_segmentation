@@ -242,7 +242,7 @@ def unetclassif_model(output_channels,
 
     x = inputs
 
-    x_classif = base_model(x)
+    # x_classif = base_model(x)
 
     # Downsampling through the model
     skips = down_stack(x)
@@ -252,10 +252,12 @@ def unetclassif_model(output_channels,
     # Classifier
     classifier = tf.keras.Sequential(name="classifier")
     classifier.add(tf.keras.layers.GlobalAveragePooling2D())
+    classifier.add(tf.keras.layers.Dense(128, activation="relu"))
+    classifier.add(tf.keras.layers.Dropout(0.5))
     classifier.add(tf.keras.layers.Dense(64, activation="relu"))
     classifier.add(tf.keras.layers.Dropout(0.5))
     classifier.add(tf.keras.layers.Dense(1, activation="sigmoid"))
-    x_classif = classifier(x_classif)
+    x_classif = classifier(x)
 
     # Upsampling and establishing the skip connections
     for up, skip in zip(up_stack, skips):

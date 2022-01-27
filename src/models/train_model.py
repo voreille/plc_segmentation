@@ -11,7 +11,7 @@ import tensorflow as tf
 
 from src.data.tf_data_hdf5 import get_tf_data
 from src.models.models import unet_model, unetclassif_model
-from src.models.losses import CustomLoss
+from src.models.losses import CustomLoss, MaskedDiceLoss
 from src.models.callbacks import EarlyStopping
 from src.models.evaluation import evaluate_pred_volume
 
@@ -32,18 +32,19 @@ plot_only_gtvl = False
 @click.option("--config", type=click.Path(exists=True))
 @click.option("--upsampling-kind", type=click.STRING, default="upsampling")
 @click.option("--split", type=click.INT, default=0)
-@click.option("--alpha", type=click.FLOAT, default=0.9)
+@click.option("--alpha", type=click.FLOAT, default=0.25)
+@click.option("--w-gtvl", type=click.FLOAT, default=1.0)
 @click.option("--w-gtvt", type=click.FLOAT, default=0.0)
 @click.option("--w-lung", type=click.FLOAT, default=0.0)
 @click.option("--gpu-id", type=click.STRING, default="0")
 @click.option("--random-angle", type=click.FLOAT, default=None)
 @click.option("--random-shift", type=click.INT, default=None)
 @click.option("--center-on", type=click.STRING, default="special")
-@click.option("--loss-type", type=click.STRING, default="masked")
+@click.option("--loss-type", type=click.STRING, default="sum_of_dice")
 @click.option('--oversample/--no-oversample', default=False)
 @click.option('--pretrained/--no-pretrained', default=True)
-@click.option('--multitask/--no-multitask', default=True)
-def main(config, upsampling_kind, split, alpha, w_gtvt, w_lung, gpu_id,
+@click.option('--multitask/--no-multitask', default=False)
+def main(config, upsampling_kind, split, alpha, w_gtvl, w_gtvt, w_lung, gpu_id,
          random_angle, random_shift, center_on, loss_type, oversample,
          pretrained, multitask):
     os.environ["CUDA_VISIBLE_DEVICES"] = gpu_id
@@ -115,14 +116,21 @@ def main(config, upsampling_kind, split, alpha, w_gtvt, w_lung, gpu_id,
     sample_seg = np.stack(
         [sample_seg[..., 0], sample_seg[..., 1], sample_seg[..., -1]], axis=-1)
 
-    losses = [
-        CustomLoss(alpha=alpha,
-                   w_lung=w_lung,
-                   w_gtvt=w_gtvt,
-                   loss_type=loss_type)
-    ]
     if multitask:
-        losses.append(tf.keras.losses.BinaryCrossentropy())
+        losses = [
+            MaskedDiceLoss(
+                w_lung=w_lung,
+                w_gtvt=w_gtvt,
+                w_gtvl=w_gtvl,
+            ),
+            tf.keras.losses.BinaryCrossentropy()
+        ]
+    else:
+        losses = MaskedDiceLoss(
+            w_lung=w_lung,
+            w_gtvt=w_gtvt,
+            w_gtvl=w_gtvl,
+        )
 
     model.compile(
         optimizer=tf.keras.optimizers.Adam(1e-3),
@@ -130,12 +138,13 @@ def main(config, upsampling_kind, split, alpha, w_gtvt, w_lung, gpu_id,
         run_eagerly=False,
     )
 
-    dir_name = ("unet__" +
-                f"prtrnd_{pretrained}__a_{alpha}__wt_{w_gtvt}__wl_{w_lung}"
-                f"upsmpl_{upsampling_kind}__" +
-                f"split_{split}__ovrsmpl_{oversample}__" + f"con_{center_on}" +
-                f"ltyp_{loss_type}__mltsk_{multitask}__" +
-                datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
+    dir_name = (
+        "unet__" +
+        f"prtrnd_{pretrained}__a_{alpha}__wt_{w_gtvt}__wl_{w_lung}__wgtvl_{w_gtvl}"
+        f"upsmpl_{upsampling_kind}__" +
+        f"split_{split}__ovrsmpl_{oversample}__" + f"con_{center_on}" +
+        f"ltyp_{loss_type}__mltsk_{multitask}__" +
+        datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
 
     callbacks = list()
 
@@ -174,9 +183,9 @@ def main(config, upsampling_kind, split, alpha, w_gtvt, w_lung, gpu_id,
         callbacks.extend([
             tf.keras.callbacks.LambdaCallback(on_epoch_end=log_prediction),
             EarlyStopping(
-                minimal_num_of_epochs=5,
+                minimal_num_of_epochs=350,
                 monitor='val_loss',
-                patience=10,
+                patience=20,
                 verbose=0,
                 mode='min',
                 restore_best_weights=True,
@@ -192,6 +201,17 @@ def main(config, upsampling_kind, split, alpha, w_gtvt, w_lung, gpu_id,
     )
     if multitask:
         model.trainable = True
+        callbacks.pop(-1)
+        callbacks.append(
+            EarlyStopping(
+                minimal_num_of_epochs=0,
+                monitor='val_loss',
+                patience=20,
+                verbose=0,
+                mode='min',
+                restore_best_weights=True,
+            ))
+
         model.compile(
             optimizer=tf.keras.optimizers.Adam(1e-5),
             loss=losses,

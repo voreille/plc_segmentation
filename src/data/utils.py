@@ -3,6 +3,7 @@ from pathlib import Path
 
 import json
 import numpy as np
+from sklearn.model_selection import RepeatedStratifiedKFold
 
 project_dir = Path(__file__).resolve().parents[2]
 

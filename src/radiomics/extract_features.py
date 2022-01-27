@@ -27,9 +27,40 @@ vois = ["GTV_L", "GTV_T", "GTV_N"]
 cores = 24
 
 
+def main():
+    patient_list = [
+        f.name.split("__")[0] for f in data_path.rglob("*PT.nii.gz")
+    ]
+
+    extractors = {
+        "CT": RadiomicsFeatureExtractor(params_ct),
+        "PT": RadiomicsFeatureExtractor(params_pt),
+    }
+
+    extractor = Extractor(extractors)
+    if cores == 1:
+        results = list()
+        for p in tqdm(patient_list):
+            results.append(extractor(p))
+    else:
+        with Pool(cores) as pool:
+            results = pool.map(
+                extractor,
+                patient_list,
+            )
+
+    df = pd.concat(results, axis=0)
+    df.to_csv(project_dir / "data/processed/radiomics/extracted_features.csv")
+
+
 class Extractor():
 
-    def __init__(self, extractors, modalities=None, vois=None):
+    def __init__(
+        self,
+        extractors,
+        modalities=None,
+        vois=None,
+    ):
         self.extractors = extractors
         if modalities is None:
             self.modalities = ["CT", "PT"]
@@ -58,32 +89,6 @@ class Extractor():
             output_df = output_df.append(output, ignore_index=True)
         print(f"Processing patient {patient} - DONE")
         return output_df
-
-
-def main():
-    patient_list = [
-        f.name.split("__")[0] for f in data_path.rglob("*PT.nii.gz")
-    ]
-
-    extractors = {
-        "CT": RadiomicsFeatureExtractor(params_ct),
-        "PT": RadiomicsFeatureExtractor(params_pt),
-    }
-
-    extractor = Extractor(extractors)
-    if cores == 1:
-        results = list()
-        for p in tqdm(patient_list):
-            results.append(extractor(p))
-    else:
-        with Pool(cores) as pool:
-            results = pool.map(
-                extractor,
-                patient_list,
-            )
-
-    df = pd.concat(results, axis=0)
-    df.to_csv(project_dir / "data/processed/radiomics/extracted_features.csv")
 
 
 if __name__ == '__main__':
