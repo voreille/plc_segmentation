@@ -78,7 +78,7 @@ def get_formatted_data(df, modality="CT", voi="GTV_L", return_df=False):
         ]) & set(df.columns))
 
     if col2rm:
-        df.drop(col2rm, axis=1)
+        df = df.drop(col2rm, axis=1)
 
     df = df.loc[patient_list, :]
     outcomes_df = outcomes_df[patient_list]

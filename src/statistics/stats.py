@@ -35,3 +35,10 @@ def compare_score(s1, s2, n_train, n_test, rope_interval=[-0.01, 0.01]):
         "proba M1 > M2": 1 - t_post.cdf(0),
         "rope_interval": ri,
     }
+
+
+def corrected_ci(s, n_train, n_test, alpha=0.95):
+    n = s.shape[0]
+    mean = np.mean(s)
+    std = corrected_std(s, n_train, n_test)
+    return t.interval(alpha, n - 1, loc=mean, scale=std)
