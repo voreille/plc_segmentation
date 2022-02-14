@@ -13,10 +13,9 @@ def evaluate_pred_volume(
     patient_list,
     h5_file,
     clinical_df,
-    ct_clipping=[-1350, 150],
-    pt_clipping=[0, 10],
     n_channels=3,
     multitask=False,
+    preprocessor=None,
 ):
 
     total_results = pd.DataFrame()
@@ -24,9 +23,7 @@ def evaluate_pred_volume(
         image = h5_file[p]["image"][()]
         mask = h5_file[p]["mask"][()]
         image = reshape_image_unet(image, mask[..., 2] + mask[..., 3])
-        image = preprocess_image(image,
-                                 ct_clipping=ct_clipping,
-                                 pt_clipping=pt_clipping)
+        image = preprocessor(image)
         if n_channels == 3:
             image = np.stack(
                 [

@@ -149,10 +149,13 @@ def classifier_mobilevnet(n_class=1, input_shape=(256, 256, 3)):
     return tf.keras.Model(inputs=inputs, outputs=x)
 
 
-def unet_model(output_channels,
-               input_shape=(None, None, 3),
-               upsampling_kind="upsampling",
-               pretrained=True):
+def unet_model(
+    output_channels,
+    input_shape=(None, None, 3),
+    upsampling_kind="upsampling",
+    pretrained=True,
+    last_activation="sigmoid",
+):
     if pretrained:
         inputs = tf.keras.layers.Input(shape=(None, None, 3))
         base_model = tf.keras.applications.MobileNetV2(input_shape=input_shape,
@@ -200,7 +203,7 @@ def unet_model(output_channels,
     last = get_last(output_channels,
                     3,
                     upsampling_kind=upsampling_kind,
-                    activation="sigmoid")
+                    activation=last_activation)
     x = last(x)
 
     return tf.keras.Model(inputs=inputs, outputs=x)

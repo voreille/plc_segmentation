@@ -1,6 +1,7 @@
 """
 TODO: change how I hande the number of channels
 """
+import random
 
 import tensorflow as tf
 import numpy as np
@@ -10,21 +11,19 @@ from src.data.data_augmentation import random_rotate
 
 
 def get_tf_data(
-        file,
-        clinical_df,
-        output_shape_image=(256, 256),
-        random_slice=True,
-        center_on="GTVt",
-        random_shift=None,
-        num_parallel_calls=None,
-        oversample=False,
-        patient_list=None,
-        random_angle=None,
-        shuffle=False,
-        return_complete_gtvl=False,
-        ct_clipping=(-1350, 150),
-        pt_clipping=(0, 10),
-        n_channels=3,
+    file,
+    clinical_df,
+    output_shape_image=(256, 256),
+    random_slice=True,
+    center_on="GTVt",
+    random_position=False,
+    num_parallel_calls=None,
+    oversample=False,
+    patient_list=None,
+    random_angle=None,
+    shuffle=False,
+    return_complete_gtvl=False,
+    n_channels=3,
 ):
     """mask: mask_gtvt, mask_gtvl, mask_lung1, mask_lung2
 
@@ -70,12 +69,10 @@ def get_tf_data(
             clinical_df=clinical_df,
             file=file,
             random_slice=random_slice,
-            random_shift=random_shift,
+            random_position=random_position,
             center_on=center_on,
             output_shape_image=output_shape_image,
             return_complete_gtvl=return_complete_gtvl,
-            ct_clipping=ct_clipping,
-            pt_clipping=pt_clipping,
             n_channels=n_channels,
         )
 
@@ -113,17 +110,15 @@ def get_tf_data(
 
 
 def _parse_image(
-        patient,
-        clinical_df=None,
-        file=None,
-        random_slice=None,
-        random_shift=None,
-        center_on=None,
-        output_shape_image=None,
-        return_complete_gtvl=None,
-        ct_clipping=(-1350, 150),
-        pt_clipping=(0, 10),
-        n_channels=3,
+    patient,
+    clinical_df=None,
+    file=None,
+    random_slice=None,
+    random_position=False,
+    center_on=None,
+    output_shape_image=None,
+    return_complete_gtvl=None,
+    n_channels=3,
 ):
     patient = patient.numpy().decode("utf-8")
     sick_lung_axis = int(clinical_df.loc[patient, "sick_lung_axis"])
@@ -168,11 +163,22 @@ def _parse_image(
         else:
             raise ValueError("Wrong value for center_on argument")
 
-    if random_shift:
-        center += np.array([
-            randint(-random_shift, random_shift),
-            randint(-random_shift, random_shift)
+    if random_position:
+        positions = np.where((mask[:, :, s, 2] + mask[:, :, s, 3]) != 0)
+        idx = random.randint(0, len(positions[0]) - 1)
+        center = np.array([positions[0][idx], positions[1][idx]])
+        origin = np.array([
+            center[0] - output_shape_image[0] // 2,
+            center[1] - output_shape_image[1] // 2
         ])
+        origin[origin < 0] = 0
+
+        if origin[0] + output_shape_image[0] - 1 > image.shape[0]:
+            origin[0] = image.shape[0] - output_shape_image[0] - 1
+
+        if origin[1] + output_shape_image[1] - 1 > image.shape[1]:
+            origin[1] = image.shape[1] - output_shape_image[1] - 1
+        center = origin + np.array(output_shape_image[:2]) // 2
 
     r = [output_shape_image[i] // 2 for i in range(2)]
     mask = mask[center[0] - r[0]:center[0] + r[0],
@@ -197,13 +203,6 @@ def _parse_image(
     image = np.squeeze(image[center[0] - r[0]:center[0] + r[0],
                              center[1] - r[1]:center[1] + r[1], s, :])
 
-    image = preprocess_image(
-        image,
-        ct_clipping=ct_clipping,
-        pt_clipping=pt_clipping,
-        #  pet_mean=pet_mean,
-        # pet_std=pet_std,
-    )
     if n_channels == 3:
         image = np.stack(
             [image[..., 0], image[..., 1],
@@ -237,3 +236,56 @@ def get_bb_mask_voxel(mask):
     y_max = np.max(positions[1])
     z_max = np.max(positions[2])
     return np.array([x_min, y_min, z_min, x_max, y_max, z_max])
+
+
+class RandomStandardization(object):
+    """
+    Apply Gaussian Blur to the PIL image.
+    """
+
+    def __init__(self,
+                 p=0.5,
+                 ct_clipping=(-1350, 150),
+                 pt_clipping=(0, 10),
+                 ct_ratio=0.1,
+                 pt_bdistribution=((-1, 1), (2, 10))):
+        self.prob = p
+        self.ct_clipping = ct_clipping
+        self.pt_clipping = pt_clipping
+        self.ct_ratio = ct_ratio
+        self.pt_bdistribution = pt_bdistribution
+
+    def __call__(self, image):
+        image_shape = image.shape
+        image = tf.py_function(self.call, [image], tf.float32)
+        image.set_shape(image_shape)
+        return image
+
+    def random_ct_clipping(self):
+        dr = (self.ct_clipping[1] - self.ct_clipping[0]) * self.ct_ratio
+        return (
+            self.ct_clipping[0] + random.uniform(-dr, dr),
+            self.ct_clipping[1] + random.uniform(-dr, dr),
+        )
+
+    def random_pt_clipping(self):
+        return (
+            self.pt_clipping[0] + random.uniform(self.pt_bdistribution[0][0],
+                                                 self.pt_bdistribution[0][1]),
+            self.pt_clipping[1] + random.uniform(self.pt_bdistribution[1][0],
+                                                 self.pt_bdistribution[1][1]),
+        )
+
+    def call(self, img):
+        if hasattr(img, "numpy"):
+            img = img.numpy()
+
+        random_clip = random.random() <= self.prob
+        if random_clip:
+            return preprocess_image(img,
+                                    ct_clipping=self.random_ct_clipping(),
+                                    pt_clipping=self.random_pt_clipping())
+
+        return preprocess_image(img,
+                                ct_clipping=self.ct_clipping,
+                                pt_clipping=self.pt_clipping)

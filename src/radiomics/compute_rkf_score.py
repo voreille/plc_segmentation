@@ -33,7 +33,7 @@ project_dir = Path(__file__).resolve().parents[2]
 path_to_features = project_dir / "data/processed/radiomics/extracted_features.csv"
 path_to_outcomes = project_dir / "data/clinical_info.csv"
 
-model_type = "default"
+model_type = "light"
 n_splits = 10
 n_repeats = 10
 modalities = ["CT", "PT"]
@@ -41,11 +41,11 @@ modalities = ["CT", "PT"]
 vois = ["GTV_L", "GTV_T", "GTV_N"]
 
 store_dummy = False
-store_standard = True
+store_standard = False
 store_suvmax = False
 store_combat = False
 store_fusion = False
-store_size_analysis = False
+store_size_analysis = True
 
 
 def main():
@@ -167,15 +167,14 @@ def compute_size_analysis(rkf,
     X_ct, _, _ = get_formatted_data(df, modality="CT", voi=voi)
 
     score = pd.DataFrame()
-    for r_train in tqdm([0.1 * k for k in range(2, 11)],
+    for n_train in tqdm([20, 30, 40, 50, 60, 70, 80, 90],
                         desc="Running for different training size"):
         for i, (idx_train, idx_test) in enumerate(rkf.split(X_pt, y=y)):
             y_train, y_test = y[idx_train], y[idx_test]
-            if r_train != 1.0:
-                idx_train, _ = train_test_split(idx_train,
-                                                train_size=r_train,
-                                                stratify=y_train)
-                y_train = y[idx_train]
+            idx_train, _ = train_test_split(idx_train,
+                                            train_size=n_train,
+                                            stratify=y_train)
+            y_train = y[idx_train]
 
             X_train_pt, X_test_pt = X_pt[idx_train], X_pt[idx_test]
             X_train_ct, X_test_ct = X_ct[idx_train], X_ct[idx_test]

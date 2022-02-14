@@ -9,7 +9,7 @@ import pandas as pd
 import click
 import tensorflow as tf
 
-from src.data.tf_data_hdf5 import get_tf_data
+from src.data.tf_data_hdf5 import get_tf_data, RandomStandardization
 from src.models.models import unet_model, unetclassif_model
 from src.models.losses import CustomLoss, MaskedDiceLoss
 from src.models.callbacks import EarlyStopping
@@ -38,18 +38,18 @@ plot_only_gtvl = False
 @click.option("--w-lung", type=click.FLOAT, default=0.0)
 @click.option("--gpu-id", type=click.STRING, default="0")
 @click.option("--random-angle", type=click.FLOAT, default=None)
-@click.option("--random-shift", type=click.INT, default=None)
-@click.option("--center-on", type=click.STRING, default="special")
+@click.option("--center-on", type=click.STRING, default="GTVl")
 @click.option("--loss-type", type=click.STRING, default="sum_of_dice")
 @click.option('--oversample/--no-oversample', default=False)
 @click.option('--pretrained/--no-pretrained', default=True)
 @click.option('--multitask/--no-multitask', default=False)
+@click.option("--random-position/--no-random-position", default=True)
 def main(config, upsampling_kind, split, alpha, w_gtvl, w_gtvt, w_lung, gpu_id,
-         random_angle, random_shift, center_on, loss_type, oversample,
-         pretrained, multitask):
+         random_angle, center_on, loss_type, oversample, pretrained, multitask,
+         random_position):
     os.environ["CUDA_VISIBLE_DEVICES"] = gpu_id
     h5_file = h5py.File(
-        project_dir / "data/processed/hdf5_2d/data_selected_sclices.hdf5", "r")
+        project_dir / "data/processed/hdf5_2d/data_selected_slices.hdf5", "r")
 
     if not pretrained:
         n_channels = 2
@@ -72,17 +72,20 @@ def main(config, upsampling_kind, split, alpha, w_gtvl, w_gtvt, w_lung, gpu_id,
     ids_val = splits_list[split]["val"]
     ids_test = splits_list[split]["test"]
 
+    preprocessor = RandomStandardization()
+    preprocessor_nrdm = RandomStandardization(p=0.0)
     if multitask:
-        f = lambda x, y, plc_status, patient: (x, (y, plc_status))
+        f = lambda x, y, plc_status, patient: (preprocessor(x),
+                                               (y, plc_status))
     else:
-        f = lambda x, y, plc_status, patient: (x, y)
+        f = lambda x, y, plc_status, patient: (preprocessor(x), y)
     ds_train = get_tf_data(h5_file,
                            clinical_df,
                            patient_list=ids_train,
                            shuffle=True,
                            oversample=oversample,
                            random_angle=random_angle,
-                           random_shift=random_shift,
+                           random_position=random_position,
                            center_on=center_on,
                            n_channels=n_channels).map(f).batch(16)
     ds_val = get_tf_data(h5_file,
@@ -235,6 +238,7 @@ def main(config, upsampling_kind, split, alpha, w_gtvl, w_gtvt, w_lung, gpu_id,
         clinical_df,
         n_channels=n_channels,
         multitask=multitask,
+        preprocessor=preprocessor_nrdm,
     )
     roc_val = evaluate_pred_volume(
         model,
@@ -243,6 +247,7 @@ def main(config, upsampling_kind, split, alpha, w_gtvl, w_gtvt, w_lung, gpu_id,
         clinical_df,
         n_channels=n_channels,
         multitask=multitask,
+        preprocessor=preprocessor_nrdm,
     )
     print(f"The ROC AUC for the val and "
           f"test are {roc_val} and {roc_test} respectively.")

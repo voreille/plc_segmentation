@@ -32,8 +32,9 @@ def compare_score(s1, s2, n_train, n_test, rope_interval=[-0.01, 0.01]):
     return {
         "t_stat": t_stat,
         "p_value": p_val,
-        "proba M1 > M2": 1 - t_post.cdf(0),
-        "rope_interval": ri,
+        "proba M1 > M2": 1 - t_post.cdf(rope_interval[1]),
+        "proba M1 == M2": ri,
+        "proba M1 < M2": t_post.cdf(rope_interval[0]),
     }
 
 
