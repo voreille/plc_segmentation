@@ -7,7 +7,7 @@ def train_dino(*, model_s, model_t, ds, epochs):
     for epoch in range(epochs):
         print("\nStart epoch", epoch)
 
-        for step, real_images in enumerate(ds):
+        for step, images in enumerate(ds):
             # Train the discriminator & generator on one batch of real images.
             d_loss, g_loss, generated_images = train_step(images)
 
@@ -28,6 +28,29 @@ def train_dino(*, model_s, model_t, ds, epochs):
             # Remove the lines below to actually train the model!
             if step > 10:
                 break
+
+
+def train_step(data):
+    global_x = data[:2]
+
+    with tf.GradientTape() as tape:
+        y_s = list()
+        for x in data:
+            y_s.append(self.model_s(x, training=True))  # Forward pass
+        y_t = list()
+        for x in global_x:
+            y_t.append(self.model_t(x, training=True))  # Forward pass
+        loss = 0
+        for ys, yt in product(y_s, y_t):
+            loss += self.dino_loss(ys, yt)
+
+    # Compute gradients
+    trainable_vars_s = self.model_s.trainable_variables
+    gradients = tape.gradient(loss, trainable_vars_s)
+    # Update weights
+    optimizer.apply_gradients(zip(gradients, trainable_vars_s))
+
+    return {m.name: m.result() for m in self.metrics}
 
 
 class DinoModel(tf.keras.Model):
