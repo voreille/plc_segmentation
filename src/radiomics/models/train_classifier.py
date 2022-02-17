@@ -19,7 +19,7 @@ from sklearn.dummy import DummyClassifier
 from sklearn.preprocessing import OneHotEncoder
 import matplotlib.pyplot as plt
 
-from src.radiomics.utils import RemoveHighlyCorrelatedFeatures
+from src.radiomics.models.utils import RemoveHighlyCorrelatedFeatures
 from src.data.utils import get_split
 
 os.environ['PYTHONHASHSEED'] = '0'

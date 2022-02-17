@@ -22,15 +22,17 @@ from scipy.stats import t
 from neuroCombat import neuroCombat
 from tqdm import tqdm
 
-from src.radiomics.utils import RemoveHighlyCorrelatedFeatures
-from src.radiomics.data import load_data, get_formatted_data
+from src.radiomics.models.utils import RemoveHighlyCorrelatedFeatures
+from src.radiomics.models.data import load_data, get_formatted_data
 
 os.environ['PYTHONHASHSEED'] = '0'
 random.seed(12345)
 seed(1)
 
-project_dir = Path(__file__).resolve().parents[2]
+project_dir = Path(__file__).resolve().parents[3]
 path_to_features = project_dir / "data/processed/radiomics/extracted_features.csv"
+path_to_features_auto = project_dir / "data/processed/radiomics/extracted_features_auto.csv"
+# path_to_outcomes = project_dir / "data/clinical_info.csv"
 path_to_outcomes = project_dir / "data/clinical_info.csv"
 
 model_type = "light"
@@ -38,20 +40,24 @@ n_splits = 10
 n_repeats = 10
 modalities = ["CT", "PT"]
 # vois = ["GTV_L"]
-vois = ["GTV_L", "GTV_T", "GTV_N"]
+vois = ["autoGTV_L", "GTV_L", "GTV_T", "GTV_N"]
 
 store_dummy = False
-store_standard = False
+store_standard = True
 store_suvmax = False
 store_combat = False
 store_fusion = False
-store_size_analysis = True
+store_size_analysis = False
 
 
 def main():
     df = load_data(path_to_features,
                    path_to_outcomes,
                    clinical_info=["plc_status", "is_chuv"])
+    df_auto = load_data(path_to_features_auto,
+                        path_to_outcomes,
+                        clinical_info=["plc_status", "is_chuv"])
+    df = pd.concat([df, df_auto], axis=0)
     rkf = RepeatedStratifiedKFold(n_splits=n_splits,
                                   n_repeats=n_repeats,
                                   random_state=4)
@@ -311,7 +317,7 @@ def compute_rkf(rkf,
     if df_scanner is not None:
         X, y = apply_combat(X, y, df_scanner)
     else:
-        X, y = X.values, y.values
+        X, y = X.values, np.squeeze(y.values)
 
     score = pd.DataFrame()
     for i, (idx_train, idx_test) in enumerate(rkf.split(X, y=y)):

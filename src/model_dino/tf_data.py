@@ -112,10 +112,12 @@ class GaussianBlur(object):
     Apply Gaussian Blur to the PIL image.
     """
 
-    def __init__(self, p=0.5, sigma_min=0.1, sigma_max=2.):
+    def __init__(self, p=0.5, s1_min=0.1, s1_max=2., s2_min=0.5, s2_max=4.):
         self.prob = p
-        self.sigma_min = sigma_min
-        self.sigma_max = sigma_max
+        self.s1_min = s1_min
+        self.s1_max = s1_max
+        self.s2_min = s2_min
+        self.s2_max = s2_max
 
     def __call__(self, image):
         image_shape = image.shape
@@ -127,11 +129,16 @@ class GaussianBlur(object):
         do_it = random.random() <= self.prob
         if not do_it:
             return img
-
-        return gaussian_filter(
-            img,
-            sigma=random.uniform(self.sigma_min, self.sigma_max),
+        img[:, :, 0] = gaussian_filter(
+            img[:, :, 0],
+            sigma=random.uniform(self.s1_min, self.s1_max),
         )
+        img[:, :, 1] = gaussian_filter(
+            img[:, :, 1],
+            sigma=random.uniform(self.s2_min, self.s2_max),
+        )
+
+        return img
 
     def call(self, img):
         return self.call_on_np(img.numpy())
@@ -284,7 +291,7 @@ def get_tf_data(
         image = RandomStandardization(p=0.5,
                                       ct_clipping=ct_clipping,
                                       pt_clipping=pt_clipping)(image)
-        image = InPainting(density=0.65, local_value=local_inpainting)(image)
+        image = InPainting(density=0.5, local_value=local_inpainting)(image)
         image = GaussianBlur(0.1)(image)
         return image
 

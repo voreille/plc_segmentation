@@ -61,7 +61,16 @@ def get_splitted_data(df, split=0, modality="CT", voi="GTV_L"):
     return X_train, X_test, y_train, y_test, feature_names
 
 
-def get_formatted_data(df, modality="CT", voi="GTV_L", return_df=False):
+def get_formatted_data(
+    df,
+    modality="CT",
+    voi="GTV_L",
+    return_df=False,
+    outcome_key="plc_status",
+    clinical_info=None,
+):
+    if clinical_info is None:
+        clinical_info = []
     df = df[(df["modality"] == modality) & (df["voi"] == voi)]
     df = df.set_index("patient_id").sort_index()
 
@@ -69,19 +78,18 @@ def get_formatted_data(df, modality="CT", voi="GTV_L", return_df=False):
         p for p in df.index
         if p not in ["PatientLC_63", "PatientLC_21", "PatientLC_71"]
     ]
-    outcomes_df = df["plc_status"]
+    outcomes_df = df[[outcome_key]]
     df = df.drop(["plc_status", "voi", "modality"], axis=1)
-    col2rm = list(
-        set([
-            'is_chuv', 'plc_status', 'pT', 'pN', 'M', 'Stage',
-            'pathologic_type'
-        ]) & set(df.columns))
+    col2rm = list((set([
+        'patient_id', 'is_chuv', 'plc_status', 'pT', 'pN', 'M', 'Stage',
+        'pathologic_type', 'new_cases', 'LymphangitisCT', 'sexe', 'age'
+    ]) & set(df.columns)) - set(clinical_info))
 
     if col2rm:
         df = df.drop(col2rm, axis=1)
 
     df = df.loc[patient_list, :]
-    outcomes_df = outcomes_df[patient_list]
+    outcomes_df = outcomes_df.loc[patient_list, :]
 
     if return_df:
         return df, outcomes_df
