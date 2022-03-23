@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 
 from src.data.utils import get_split
 
@@ -33,7 +34,13 @@ def load_data(path_to_features, path_to_outcomes, clinical_info=None):
     if clinical_info is None:
         clinical_info = ["plc_status"]
     df = pd.read_csv(path_to_features)
-    clinical_df = pd.read_csv(path_to_outcomes).set_index("patient_id")
+    clinical_df = pd.read_csv(path_to_outcomes)
+    set_ids_1 = set(df["patient_id"].unique())
+    set_ids_2 = set(clinical_df["patient_id"].unique())
+    ids_list = set_ids_1.intersection(set_ids_2)
+    df = df[df["patient_id"].isin(ids_list)]
+    clinical_df = clinical_df[clinical_df["patient_id"].isin(ids_list)]
+    clinical_df = clinical_df.set_index("patient_id")
     for col in clinical_info:
         df[col] = df["patient_id"].map(lambda x: clinical_df.loc[x, col])
 
@@ -75,8 +82,8 @@ def get_formatted_data(
     df = df.set_index("patient_id").sort_index()
 
     patient_list = [
-        p for p in df.index
-        if p not in ["PatientLC_63", "PatientLC_21", "PatientLC_71"]
+        p for p in df.index if p not in
+        ["PatientLC_63", "PatientLC_21", "PatientLC_71", "PatientLC_72"]
     ]
     outcomes_df = df[[outcome_key]]
     df = df.drop(["plc_status", "voi", "modality"], axis=1)
@@ -94,4 +101,4 @@ def get_formatted_data(
     if return_df:
         return df, outcomes_df
     else:
-        return df.values, outcomes_df.values, df.columns
+        return df.values, np.squeeze(outcomes_df.values), df.columns

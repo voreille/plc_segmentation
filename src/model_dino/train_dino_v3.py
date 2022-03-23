@@ -41,7 +41,7 @@ model_dict = {
 @click.option("--split", type=click.INT, default=0)
 @click.option("--batch-size", type=click.INT, default=4)
 @click.option("--output-channels", type=click.INT, default=100)
-@click.option("--gpu-id", type=click.STRING, default="0")
+@click.option("--gpu-id", type=click.STRING, default="3")
 @click.option("--model-name", type=click.STRING, default="UnetLight")
 @click.option('--oversample/--no-oversample', default=False)
 def main(config, split, batch_size, output_channels, gpu_id, model_name,
@@ -75,6 +75,7 @@ def main(config, split, batch_size, output_channels, gpu_id, model_name,
         local_inpainting=False,
         n_channels=2,
         painting_method="random",
+        return_image=True,
     ).repeat().batch(batch_size).take(steps_per_epoch)
 
     ds_val = get_tf_data(
@@ -89,14 +90,27 @@ def main(config, split, batch_size, output_channels, gpu_id, model_name,
 
     model_t = model_dict[model_name](output_channels=output_channels,
                                      last_activation="linear")
-    model_s = model_dict[model_name](output_channels=output_channels,
-                                     last_activation="linear")
+
+    model_r = tf.keras.Sequential([
+        tf.keras.layers.Lambda(lambda x: tf.nn.softmax(x / tau_s)),
+        tf.keras.layers.Conv2D(256, 1, activation="relu"),
+        tf.keras.layers.Conv2D(2, 1, activation="linear")
+    ])
+
+    inputs = tf.keras.Input(shape=(256, 256, 2))
+    x_dino = model_dict[model_name](output_channels=output_channels,
+                                    last_activation="linear",
+                                    name="student_unet")(inputs)
+
+    x_r = model_r(x_dino)
+    model_s = tf.keras.Model(inputs=inputs, outputs=[x_dino, x_r])
 
     dir_name = (f"{model_name}" + f"split_{split}__ovrsmpl_{oversample}__" +
+                "with_reconstruction__" +
                 datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
 
     sample_images = next(ds_val.take(1).as_numpy_iterator())
-    _ = model_s(sample_images[0])
+    _, _ = model_s(sample_images[0])
     _ = model_t(sample_images[0])
     callbacks = list()
     if not DEBUG:
@@ -107,7 +121,7 @@ def main(config, split, batch_size, output_channels, gpu_id, model_name,
 
         def log_prediction(epoch, logs):
             # Use the model to predict the values from the validation dataset.
-            sample_pred = model_s.predict(sample_images[2])
+            sample_pred, sample_r = model_s.predict(sample_images[2])
 
             # Log the confusion matrix as an image summary.
             with file_writer_image.as_default():
@@ -150,7 +164,7 @@ def main(config, split, batch_size, output_channels, gpu_id, model_name,
         for step, im in enumerate(ds_train):
             optimizer.lr = lr_schedule[step]
             # optimizer.weight_decay = wd_schedule[step]
-            d_loss, center = train_step(
+            dino_loss, r_loss, center = train_step(
                 im,
                 momentum_teacher=momentum_schedule[total_step],
                 momentum_center=momentum_center,
@@ -159,14 +173,18 @@ def main(config, split, batch_size, output_channels, gpu_id, model_name,
                 tau_s=tau_s,
                 tau_t=tau_t,
                 optimizer=optimizer,
-                center=center)
+                center=center,
+                weight_reconstruction=100,
+            )
 
             # Log every 200 batches.
             if step % 10 == 0:
                 print(
-                    f"Training loss: {d_loss} at step {step} and epoch {epoch}"
+                    f"Training dino loss: {dino_loss} and reconstruction loss: {r_loss} at step {step} and epoch {epoch}"
                 )
-                print(f"entropy on batch: {entropy(model_s(im[0]),tau=tau_s)}")
+                print(
+                    f"entropy on batch: {entropy(model_s(im[0])[0],tau=tau_s)}"
+                )
                 print("Seen so far: %d samples" % ((step + 1) * batch_size))
                 # print(f"center evolution {center[:10]}")
 
@@ -196,8 +214,14 @@ def entropy(y_pred, tau):
 
 
 @tf.function
+def mse_loss(y_true, y_pred):
+    return tf.reduce_mean((y_true - y_pred)**2)
+
+
+@tf.function
 def train_step(images, *, momentum_teacher, momentum_center, optimizer, center,
-               model_s, model_t, tau_s, tau_t):
+               model_s, model_t, tau_s, tau_t, weight_reconstruction):
+    original_image = images[0]
     global_x = images[:2]
 
     y_t = list()
@@ -207,21 +231,31 @@ def train_step(images, *, momentum_teacher, momentum_center, optimizer, center,
     if center is None:
         center = tf.reduce_mean(tf.concat(y_t, axis=0), axis=(0, 1, 2))
     with tf.GradientTape() as tape:
-        y_s = list()
+        outputs_s = list()
         for x in images:
-            y_s.append(model_s(x, training=True))  # Forward pass
-        loss = 0
+            outputs_s.append(model_s(x, training=True))  # Forward pass
+        y_s, reconstructed_images = list(zip(*outputs_s))
+
+        loss_1 = 0
         n_loss = 0
         for s_ind, t_ind in product(range(len(y_s)), range(len(y_t))):
             if s_ind == t_ind:
                 continue
-            loss += dino_loss(y_s[s_ind],
-                              y_t[t_ind],
-                              center=center,
-                              tau_s=tau_s,
-                              tau_t=tau_t)
+            loss_1 += dino_loss(y_s[s_ind],
+                                y_t[t_ind],
+                                center=center,
+                                tau_s=tau_s,
+                                tau_t=tau_t)
             n_loss += 1
-        loss = loss / n_loss
+        loss_1 = loss_1 / n_loss
+
+        loss_2 = 0
+        n_loss = 0
+        for y in reconstructed_images:
+            loss_2 += mse_loss(original_image, y)
+            n_loss += 1
+        loss_2 = loss_2 / n_loss
+        loss = loss_1 + weight_reconstruction * loss_2
 
     # Compute gradients
     gradients = tape.gradient(loss, model_s.trainable_variables)
@@ -232,11 +266,12 @@ def train_step(images, *, momentum_teacher, momentum_center, optimizer, center,
 
     for i, w in enumerate(model_t.weights):
         model_t.weights[i].assign(momentum_teacher * w +
-                                  (1 - momentum_teacher) * model_s.weights[i])
+                                  (1 - momentum_teacher) *
+                                  model_s.get_layer("student_unet").weights[i])
 
     center = momentum_center * center + (1 - momentum_center) * tf.reduce_mean(
         tf.concat(y_t, axis=0), axis=(0, 1, 2))
-    return loss, center
+    return loss_1, loss_2, center
 
 
 def cosine_scheduler(base_value,

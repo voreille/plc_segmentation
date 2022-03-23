@@ -33,7 +33,7 @@ project_dir = Path(__file__).resolve().parents[3]
 path_to_features = project_dir / "data/processed/radiomics/extracted_features.csv"
 path_to_features_auto = project_dir / "data/processed/radiomics/extracted_features_auto.csv"
 # path_to_outcomes = project_dir / "data/clinical_info.csv"
-path_to_outcomes = project_dir / "data/clinical_info.csv"
+path_to_outcomes = project_dir / "data/clinical_info_updated.csv"
 
 model_type = "light"
 n_splits = 10
@@ -53,10 +53,10 @@ store_size_analysis = False
 def main():
     df = load_data(path_to_features,
                    path_to_outcomes,
-                   clinical_info=["plc_status", "is_chuv"])
+                   clinical_info=["plc_status"])
     df_auto = load_data(path_to_features_auto,
                         path_to_outcomes,
-                        clinical_info=["plc_status", "is_chuv"])
+                        clinical_info=["plc_status"])
     df = pd.concat([df, df_auto], axis=0)
     rkf = RepeatedStratifiedKFold(n_splits=n_splits,
                                   n_repeats=n_repeats,
@@ -144,7 +144,7 @@ def main():
                 compute_rkf_dummy(rkf, df, strategy="stratified"),
                 compute_rkf_dummy(rkf, df, strategy="prior"),
                 compute_rkf_dummy(rkf, df, strategy="random_features"),
-                compute_rkf_center(rkf, df),
+                # compute_rkf_center(rkf, df),
             ],
             ignore_index=True,
         )

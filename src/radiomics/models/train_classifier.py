@@ -50,7 +50,6 @@ def main(path_to_features,
         X_test = X_test[idx, :]
         y_test = y_test[idx]
 
-
     search = GridSearchCV(pipe,
                           param_grid,
                           cv=StratifiedKFold(),
@@ -71,13 +70,18 @@ def main(path_to_features,
 
     score = pd.DataFrame()
     for k in range(n_bootstraps):
-        X_test_resampled, y_test_resampled = resample(
-            X_test, y_test, replace=True, n_samples=len(y_test))
-
+        X_test_resampled, y_test_resampled = resample(X_test,
+                                                      y_test,
+                                                      replace=True,
+                                                      n_samples=len(y_test))
 
         y_pred = search.predict(X_test_resampled)
         y_score = search.predict_proba(X_test_resampled)[:, 1]
-        score = append_score(score, y_test_resampled, y_pred, y_score, pos_label=1)
+        score = append_score(score,
+                             y_test_resampled,
+                             y_pred,
+                             y_score,
+                             pos_label=1)
 
     ic_score = {
         'roc_auc': [],
@@ -221,7 +225,7 @@ def append_score(df, y_true, y_pred, y_score, pos_label=1, neg_label=0):
 if __name__ == '__main__':
 
     path_to_features = "/home/valentin/python_wkspce/plc_segmentation/data/processed/radiomics/extracted_features.csv"
-    path_to_outcomes = "/home/valentin/python_wkspce/plc_segmentation/data/clinical_info.csv"
+    path_to_outcomes = "/home/valentin/python_wkspce/plc_segmentation/data/clinical_info_updated.csv"
 
     scaler = StandardScaler()
 

@@ -21,11 +21,10 @@ DEBUG = True
 
 def main():
 
-    # patients_list = [
-    #     p.name.split("__")[0] for p in data_path.rglob("*__PT.nii.gz")
-    # ]
-    # patients_list = [p for p in patients_list if p != "PatientLC_63"]
-    patients_list = ["PatientLC_44"]
+    patients_list = [
+        p.name.split("__")[0] for p in data_path.rglob("*__PT.nii.gz")
+    ]
+    patients_list = [p for p in patients_list if p != "PatientLC_63"]
 
     results_df = pd.DataFrame()
 
@@ -34,6 +33,7 @@ def main():
                           data_path=data_path)
 
     if DEBUG:
+        patients_list = ["PatientLC_4"]
         results = [extractor(p) for p in patients_list]
         return 0
     else:
@@ -71,7 +71,7 @@ class Extractor():
         except RuntimeError as e:
             print(f"{e} for the patient {patient_id}")
         if DEBUG:
-            sitk.WriteImage(peritumoral_mask, "test.nii.gz")
+            sitk.WriteImage(peritumoral_mask, f"{patient_id}__AUTO_SEG.nii.gz")
             return pd.DataFrame()
         results = self.extractor_ct.execute(image_ct, peritumoral_mask)
         results = {k: i for k, i in results.items() if "iagnostics" not in k}
@@ -109,6 +109,34 @@ def sphere(r):
 
 
 def get_peritumoral_mask(
+    image_pt,
+    mask_gtvt,
+    mask_lung,
+    dilation_radius=5,
+):
+
+    resampler = sitk.ResampleImageFilter()
+    resampler.SetReferenceImage(mask_gtvt)
+    resampler.SetOutputDirection([1, 0, 0, 0, 1, 0, 0, 0, 1])
+    resampler.SetOutputSpacing((1, 1, 1))
+    resampler.SetInterpolator(sitk.sitkLinear)
+
+    image_pt = resampler.Execute(image_pt)
+    resampler.SetInterpolator(sitk.sitkNearestNeighbor)
+    mask_gtvt = resampler.Execute(mask_gtvt)
+    mask_lung = resampler.Execute(mask_lung)
+
+    gtvt = sitk.GetArrayFromImage(mask_gtvt)
+    lung = (sitk.GetArrayFromImage(mask_lung) != 0) & (gtvt == 0)
+    gtvt_dilated = binary_dilation(gtvt, structure=sphere(dilation_radius))
+    new_mask = ((gtvt_dilated != 0) & (lung != 0)).astype(np.uint32)
+
+    output = sitk.GetImageFromArray(new_mask.astype(np.uint32))
+    output.SetOrigin(mask_gtvt.GetOrigin())
+    return output
+
+
+def get_peritumoral_mask_old(
     image_pt,
     mask_gtvt,
     mask_lung,

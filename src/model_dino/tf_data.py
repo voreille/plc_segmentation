@@ -15,11 +15,12 @@ class LocalShuffling(object):
     Apply Gaussian Blur to the PIL image.
     """
 
-    def __init__(self,
-                 density=0.6,
-                 max_size=50,
-                 min_size=10,
-                 local_range=True):
+    def __init__(
+        self,
+        density=0.6,
+        max_size=50,
+        min_size=10,
+    ):
         self.density = density
         self.max_size = max_size
         self.min_size = min_size
@@ -51,6 +52,46 @@ class LocalShuffling(object):
             window = np.reshape(window, (nrows, ncols, nchannels))
             img[mask_position[0]:mask_position[0] + mask_size[0],
                 mask_position[1]:mask_position[1] + mask_size[1], :] = window
+        return img
+
+
+class HardInPainting(object):
+    """
+    Apply Gaussian Blur to the PIL image.
+    """
+
+    def __init__(
+        self,
+        density=0.6,
+        max_size=50,
+        min_size=10,
+    ):
+        self.density = density
+        self.max_size = max_size
+        self.min_size = min_size
+
+    def __call__(self, image):
+        image_shape = image.shape
+        image = tf.py_function(self.call, [image], tf.float32)
+        image.set_shape(image_shape)
+        return image
+
+    def call(self, img):
+        img = img.numpy()
+        n_mask = int((img.shape[0] * img.shape[1]) /
+                     ((self.max_size + self.min_size) / 2)**2 * self.density)
+
+        for _ in range(n_mask):
+            mask_size = (random.randint(self.min_size, self.max_size),
+                         random.randint(self.min_size, self.max_size))
+            mask_position = (
+                random.randint(0, img.shape[0] - mask_size[0] - 1),
+                random.randint(0, img.shape[1] - mask_size[1] - 1),
+            )
+
+            img[mask_position[0]:mask_position[0] + mask_size[0],
+                mask_position[1]:mask_position[1] + mask_size[1], :] = -1
+
         return img
 
 
@@ -210,6 +251,9 @@ def get_tf_data(
     n_channels=3,
     n_local_transforms=2,
     local_inpainting=True,
+    return_image=False,
+    local_shuffling=True,
+    painting_method="random",
 ):
     """mask: mask_gtvt, mask_gtvl, mask_lung1, mask_lung2
 
@@ -265,13 +309,14 @@ def get_tf_data(
         image.set_shape(output_shape_image + (n_channels, ))
         return image
 
-    def augment(image):
-        if random_angle is not None:
-            image = random_rotate(image, angle=random_angle)
-        return image
+    # def augment(image):
+    #     if random_angle is not None:
+    #         image = random_rotate(image, angle=random_angle)
+    #     return image
 
-    out_ds = patient_ds.map(lambda p: tf_parse_image(p),
-                            num_parallel_calls=num_parallel_calls).map(augment)
+    out_ds = patient_ds.map(
+        lambda p: tf_parse_image(p),
+        num_parallel_calls=num_parallel_calls)  # .map(augment)
 
     def global_transfo1(image):
         image = RandomStandardization(p=0.0,
@@ -291,15 +336,38 @@ def get_tf_data(
         image = RandomStandardization(p=0.5,
                                       ct_clipping=ct_clipping,
                                       pt_clipping=pt_clipping)(image)
-        image = InPainting(density=0.5, local_value=local_inpainting)(image)
+        if painting_method == "local_shuffling":
+            image = LocalShuffling(density=0.5)(image)
+        elif painting_method == "random":
+            image = InPainting(density=0.5,
+                               local_value=local_inpainting)(image)
+        elif painting_method == "constant":
+            image = HardInPainting(density=0.5)(image)
+        else:
+            raise ValueError(
+                f"the painting method {painting_method} is not implementend")
         image = GaussianBlur(0.1)(image)
         return image
 
-    out_ds = out_ds.map(lambda image: (
-        global_transfo1(image),
-        global_transfo2(image),
-    ) + tuple([local_transfo(image) for _ in range(n_local_transforms)]),
-                        num_parallel_calls=num_parallel_calls)
+    def preprocessing(image):
+        return RandomStandardization(p=0.0,
+                                     ct_clipping=ct_clipping,
+                                     pt_clipping=pt_clipping)(image)
+
+    if return_image:
+        out_ds = out_ds.map(lambda image: (
+            preprocessing(image),
+            global_transfo1(image),
+            global_transfo2(image),
+        ) + tuple([local_transfo(image) for _ in range(n_local_transforms)]),
+                            num_parallel_calls=num_parallel_calls)
+    else:
+        out_ds = out_ds.map(lambda image: (
+            global_transfo1(image),
+            global_transfo2(image),
+        ) + tuple([local_transfo(image) for _ in range(n_local_transforms)]),
+                            num_parallel_calls=num_parallel_calls)
+
     return out_ds
 
 
@@ -337,12 +405,13 @@ def _parse_image(
         [center[0] - output_shape[0] // 2, center[1] - output_shape[1] // 2])
     origin[origin < 0] = 0
 
-    if origin[0] + output_shape[0] - 1 > image.shape[0]:
+    if origin[0] + output_shape[0] > image.shape[0]:
         origin[0] = image.shape[0] - output_shape[0] - 1
 
-    if origin[1] + output_shape[1] - 1 > image.shape[1]:
+    if origin[1] + output_shape[1] > image.shape[1]:
         origin[1] = image.shape[1] - output_shape[1] - 1
 
+    original_image_shape = image.shape
     image = image[origin[0]:origin[0] + output_shape[0],
                   origin[1]:origin[1] + output_shape[1], center[2], :]
 
@@ -352,6 +421,10 @@ def _parse_image(
              np.zeros_like(image[..., 0])],
             axis=-1)
 
+    if image.shape[0] != output_shape[0] or image.shape[0] != output_shape[1]:
+        raise RuntimeError(
+            f"MEN, the original image shape is {original_image_shape}, the origin is {origin}"
+        )
     return image
 
 

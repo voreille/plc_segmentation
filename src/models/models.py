@@ -4,6 +4,7 @@ from tensorflow.python.training.tracking import base
 from tensorflow_addons.losses import sigmoid_focal_crossentropy
 
 from src.models.layers import ResidualLayer2D
+from src.decorrelated_bn.normalization import DecorelationNormalization
 
 import matplotlib.pyplot as plt
 
@@ -471,3 +472,131 @@ class UnetClassif(tf.keras.Model):
 
         x += tf.add_n(xs_upsampled)
         return self.last(x), x_classif
+
+
+class UnetLightBase(tf.keras.Model):
+
+    def __init__(self,
+                 *args,
+                 output_channels=3,
+                 last_activation="sigmoid",
+                 include_last=True,
+                 **kwargs):
+        super().__init__(*args, **kwargs)
+        self.down_stack = [
+            self.get_first_block(8),
+            self.get_down_block(16),
+            self.get_down_block(32),
+            self.get_down_block(64),
+            self.get_down_block(128),
+        ]
+        self.up_stack = [
+            self.get_up_block(64),
+            self.get_up_block(32),
+            self.get_up_block(16),
+            self.get_up_block(8)
+        ]
+
+        if include_last:
+            self.last = self.get_last(output_channels,
+                                      activation=last_activation)
+        else:
+            self.last = None
+
+    def get_last(self, output_channels, activation="linear"):
+        return tf.keras.Sequential([
+            tf.keras.layers.Conv2D(output_channels,
+                                   1,
+                                   activation=activation,
+                                   padding='SAME'),
+        ])
+
+    def get_first_block(self, filters):
+        return tf.keras.Sequential([
+            ResidualLayer2D(filters, 7, padding='SAME'),
+            ResidualLayer2D(filters, 3, padding='SAME'),
+        ])
+
+    def get_down_block(self, filters):
+        raise NotImplementedError()
+
+    def get_up_block(self, filters, n_conv=2):
+        raise NotImplementedError()
+
+    def call(self, inputs, training=None):
+        x = inputs
+        skips = []
+        for block in self.down_stack:
+            x = block(x, training=training)
+            skips.append(x)
+
+        skips = reversed(skips[:-1])
+
+        for block, skip in zip(self.up_stack, skips):
+            x = block((x, skip), training=training)
+
+        if self.last:
+            return self.last(x, training=training)
+        else:
+            return x
+
+
+class UnetLight(UnetLightBase):
+
+    def get_first_block(self, filters):
+        return tf.keras.Sequential([
+            ResidualLayer2D(filters, 7, padding='SAME'),
+            ResidualLayer2D(filters, 3, padding='SAME'),
+        ])
+
+    def get_down_block(self, filters):
+        return tf.keras.Sequential([
+            ResidualLayer2D(filters, 3, strides=2, padding='SAME'),
+            ResidualLayer2D(filters, 3, padding='SAME'),
+        ])
+
+    def get_up_block(self, filters, n_conv=2):
+        return UpBlockLight(filters, n_conv=n_conv)
+
+
+class UnetLightDecorrelated(UnetLight):
+
+    def get_last(self, output_channels, activation="linear"):
+        return tf.keras.Sequential([
+            tf.keras.layers.Conv2D(output_channels,
+                                   1,
+                                   activation="linear",
+                                   padding='SAME'),
+            DecorelationNormalization(decomposition="iter_norm_wm",
+                                      iter_num=5),
+            tf.keras.layers.Activation(activation)
+        ])
+
+
+class UpBlockLight(tf.keras.layers.Layer):
+
+    def __init__(self, filters, *args, n_conv=2, up_conv=False, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.conv = tf.keras.Sequential()
+        for _ in range(n_conv):
+            self.conv.add(
+                tf.keras.layers.Conv2D(filters,
+                                       3,
+                                       padding='SAME',
+                                       activation='relu'), )
+        if up_conv:
+            self.upsample = tf.keras.layers.Conv2DTranspose(filters,
+                                                            2,
+                                                            strides=(2, 2),
+                                                            padding='SAME',
+                                                            activation='relu')
+        else:
+            self.upsample = tf.keras.layers.UpSampling2D(
+                interpolation="bilinear")
+        self.concat = tf.keras.layers.Concatenate()
+
+    def call(self, inputs, training=None):
+        x, skip = inputs
+        x = self.upsample(x, training=training)
+        x = self.concat([x, skip])
+        return self.conv(x, training=training)

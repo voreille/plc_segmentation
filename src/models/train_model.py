@@ -77,8 +77,11 @@ def main(config, upsampling_kind, split, alpha, w_gtvl, w_gtvt, w_lung, gpu_id,
     if multitask:
         f = lambda x, y, plc_status, patient: (preprocessor(x),
                                                (y, plc_status))
+        f_nrdm = lambda x, y, plc_status, patient: (preprocessor_nrdm(x),
+                                                    (y, plc_status))
     else:
         f = lambda x, y, plc_status, patient: (preprocessor(x), y)
+        f_nrdm = lambda x, y, plc_status, patient: (preprocessor_nrdm(x), y)
     ds_train = get_tf_data(h5_file,
                            clinical_df,
                            patient_list=ids_train,
@@ -93,7 +96,7 @@ def main(config, upsampling_kind, split, alpha, w_gtvl, w_gtvt, w_lung, gpu_id,
                          patient_list=ids_val,
                          center_on="GTVl",
                          random_slice=False,
-                         n_channels=n_channels).map(f).batch(4)
+                         n_channels=n_channels).map(f_nrdm).batch(4)
     ids_val_pos = [p for p in ids_val if clinical_df.loc[p, "plc_status"] == 1]
     ids_val_neg = [p for p in ids_val if clinical_df.loc[p, "plc_status"] == 0]
     ds_sample = get_tf_data(h5_file,
@@ -101,7 +104,7 @@ def main(config, upsampling_kind, split, alpha, w_gtvl, w_gtvt, w_lung, gpu_id,
                             patient_list=ids_val_pos[:2] + ids_val_neg[:1],
                             center_on="GTVt",
                             random_slice=False,
-                            n_channels=n_channels).map(f).batch(3)
+                            n_channels=n_channels).map(f_nrdm).batch(3)
 
     if multitask:
         sample_images, sample_outputs = next(

@@ -26,7 +26,7 @@ random.seed(12345)
 seed(1)
 
 path_to_features = "/home/valentin/python_wkspce/plc_segmentation/data/processed/radiomics/extracted_features.csv"
-path_to_outcomes = "/home/valentin/python_wkspce/plc_segmentation/data/clinical_info.csv"
+path_to_outcomes = "/home/valentin/python_wkspce/plc_segmentation/data/clinical_info_updated.csv"
 
 shuffle = True
 n_splits = 10

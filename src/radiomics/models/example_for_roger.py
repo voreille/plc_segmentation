@@ -21,8 +21,8 @@ random.seed(12345)
 seed(1)
 
 PATH_TO_FEATURES = "/home/valentin/python_wkspce/plc_segmentation/data/processed/radiomics/extracted_features.csv"
-PATH_OUTCOMES = "/home/valentin/python_wkspce/plc_segmentation/data/clinical_info.csv"
-MODALITY = "CT"
+PATH_OUTCOMES = "/home/valentin/python_wkspce/plc_segmentation/data/clinical_info_updated.csv"
+MODALITY = "PT"
 VOI = "GTV_L"
 N_BOOTSTRAP = 1000
 
@@ -30,11 +30,7 @@ N_BOOTSTRAP = 1000
 def main():
     df = load_data(PATH_TO_FEATURES, PATH_OUTCOMES)
     X_train, X_test, y_train, y_test, feature_names = get_formatted_data(
-        df,
-        modality=MODALITY,
-        voi=VOI,
-        test_size=0.4,
-    )
+        df, modality=MODALITY, voi=VOI, test_size=40, only_chuv_in_test=True)
 
     search = get_gridsearch()
 
@@ -113,9 +109,14 @@ def clean_df(df):
 
 def load_data(path_to_features, path_to_outcomes):
     df = pd.read_csv(path_to_features)
+    df = df[~df.patient_id.isin(
+        ["PatientLC_71", "PatientLC_21", "PatientLC_63", "PatientLC_72"])]
     clinical_df = pd.read_csv(path_to_outcomes).set_index("patient_id")
     df["plc_status"] = df["patient_id"].map(
         lambda x: clinical_df.loc[x, "plc_status"])
+
+    df["is_chuv"] = df["patient_id"].map(
+        lambda x: clinical_df.loc[x, "is_chuv"])
 
     df = df.drop(["Unnamed: 0"], axis=1)
     df = clean_df(df)
@@ -123,14 +124,33 @@ def load_data(path_to_features, path_to_outcomes):
     return df
 
 
-def get_formatted_data(df, modality="CT", voi="GTV_L", test_size=0.2):
+def get_formatted_data(df,
+                       modality="CT",
+                       voi="GTV_L",
+                       test_size=40,
+                       only_chuv_in_test=True):
     df = df[(df["modality"] == modality) & (df["voi"] == voi)]
     ids = df["patient_id"].values
     df = df.set_index("patient_id")
-    ids_train, ids_test = train_test_split(ids,
-                                           test_size=test_size,
-                                           shuffle=True,
-                                           stratify=df.loc[ids, "plc_status"])
+    if only_chuv_in_test:
+        ids_test = list(
+            np.random.choice(df[(df["is_chuv"] == 1)
+                                & (df["plc_status"] == 1)].index,
+                             size=test_size // 2,
+                             replace=False))
+        ids_test_plcneg = list(
+            np.random.choice(df[(df["is_chuv"] == 1)
+                                & (df["plc_status"] == 0)].index,
+                             size=test_size // 2,
+                             replace=False))
+        ids_test.extend(ids_test_plcneg)
+        ids_train = list(set(ids) - set(ids_test))
+    else:
+        ids_train, ids_test = train_test_split(ids,
+                                               test_size=test_size,
+                                               shuffle=True,
+                                               stratify=df.loc[ids,
+                                                               "plc_status"])
     outcomes_df = df["plc_status"]
     df = df.drop(["plc_status", "voi", "modality"], axis=1)
 
