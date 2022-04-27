@@ -32,6 +32,7 @@ def get_pretrained_encoder(path=None):
 
 
 class Unet(tf.keras.Model):
+
     def __init__(
         self,
         output_channels=1,
@@ -55,7 +56,9 @@ class Unet(tf.keras.Model):
             UpBlockLight(24, n_conv=1),
         ]
         self.last = tf.keras.Sequential([
-            tf.keras.layers.Conv3D(12, 3, activation='relu', padding='SAME'),
+            tf.keras.layers.Conv3D(12, 3, activation='linear', padding='SAME'),
+            tf.keras.layers.BatchNormalization(),
+            tf.keras.layers.ReLU(),
             tf.keras.layers.Conv3D(output_channels,
                                    1,
                                    activation=last_activation,
@@ -83,15 +86,10 @@ class Unet(tf.keras.Model):
             skips.append(x)
 
         skips = reversed(skips[:-1])
-        xs_upsampled = []
 
         for block, skip in zip(self.up_stack, skips):
             x = block((x, skip), training=training)
-            if type(x) is tuple:
-                x, x_upsampled = x
-                xs_upsampled.append(x_upsampled)
 
-        x += tf.add_n(xs_upsampled)
         return self.last(x, training=training)
 
     def get_config(self):
@@ -104,8 +102,13 @@ class Unet(tf.keras.Model):
 
 
 class UnetRadiomics(tf.keras.Model):
-    def __init__(self, *args, **kwargs):
-        super().__init__()
+
+    def __init__(self,
+                 *args,
+                 output_channels=1,
+                 last_activation="sigmoid",
+                 **kwargs):
+        super().__init__(*args, **kwargs)
         self.down_stack = [
             self.get_first_block(12),
             self.get_down_block(24),
@@ -115,18 +118,22 @@ class UnetRadiomics(tf.keras.Model):
         ]
 
         self.up_stack = [
-            UpBlock(96, upsampling_factor=8),
-            UpBlock(48, upsampling_factor=4),
-            UpBlock(24, upsampling_factor=2),
-            UpBlock(24, n_conv=1),
+            UpBlockLight(96),
+            UpBlockLight(48),
+            UpBlockLight(24),
+            UpBlockLight(24, n_conv=1),
         ]
         self.last = tf.keras.Sequential([
-            tf.keras.layers.Conv3D(12, 3, activation='relu', padding='SAME'),
-            tf.keras.layers.Conv3D(1, 1, activation='sigmoid', padding='SAME'),
+            tf.keras.layers.Conv3D(12, 3, activation='linear', padding='SAME'),
+            tf.keras.layers.BatchNormalization(),
+            tf.keras.layers.ReLU(),
+            tf.keras.layers.Conv3D(output_channels,
+                                   1,
+                                   activation=last_activation,
+                                   padding='SAME'),
         ])
         self.radiomics = tf.keras.Sequential([
             tf.keras.layers.GlobalAveragePooling3D(),
-            tf.keras.layers.Dense(48, activation='relu'),
             tf.keras.layers.Dense(2, activation='softmax')
         ])
 
@@ -148,23 +155,19 @@ class UnetRadiomics(tf.keras.Model):
         x = inputs
         skips = []
         for block in self.down_stack:
-            x = block(x)
+            x = block(x, training=training)
             skips.append(x)
         x_middle = x
         skips = reversed(skips[:-1])
-        xs_upsampled = []
 
         for block, skip in zip(self.up_stack, skips):
-            x = block((x, skip))
-            if type(x) is tuple:
-                x, x_upsampled = x
-                xs_upsampled.append(x_upsampled)
+            x = block((x, skip), training=training)
 
-        x += tf.add_n(xs_upsampled)
         return self.last(x), self.radiomics(x_middle)
 
 
 class UpBlock(tf.keras.layers.Layer):
+
     def __init__(
         self,
         filters,
@@ -212,6 +215,7 @@ class UpBlock(tf.keras.layers.Layer):
 
 
 class UpBlockLight(tf.keras.layers.Layer):
+
     def __init__(
         self,
         filters,
@@ -220,16 +224,18 @@ class UpBlockLight(tf.keras.layers.Layer):
         super().__init__()
         self.conv = tf.keras.Sequential()
         for _ in range(n_conv):
-            self.conv.add(
-                tf.keras.layers.Conv3D(filters,
-                                       3,
-                                       padding='SAME',
-                                       activation='relu'), )
-        self.trans_conv = tf.keras.layers.Conv3DTranspose(filters,
-                                                          2,
-                                                          strides=(2, 2, 2),
-                                                          padding='SAME',
-                                                          activation='relu')
+            self.conv.add(tf.keras.layers.Conv3D(filters, 3, padding='SAME'))
+            self.conv.add(tf.keras.layers.BatchNormalization())
+            self.conv.add(tf.keras.layers.ReLU())
+        self.trans_conv = tf.keras.Sequential([
+            tf.keras.layers.Conv3DTranspose(filters,
+                                            2,
+                                            strides=(2, 2, 2),
+                                            padding='SAME',
+                                            activation='relu'),
+            tf.keras.layers.BatchNormalization(),
+            tf.keras.layers.ReLU(),
+        ])
         self.concat = tf.keras.layers.Concatenate()
 
     def call(self, inputs, training=None):
