@@ -20,8 +20,8 @@ from sklearn.metrics import accuracy_score, recall_score, precision_score, \
     roc_auc_score, confusion_matrix
 from scipy.stats import t
 
-from src.radiomics.utils import RemoveHighlyCorrelatedFeatures
-from src.radiomics.data import load_data, get_formatted_data
+from src.radiomics.models.utils import RemoveHighlyCorrelatedFeatures
+from src.radiomics.models.data import load_data, get_formatted_data
 
 os.environ['PYTHONHASHSEED'] = '0'
 random.seed(12345)

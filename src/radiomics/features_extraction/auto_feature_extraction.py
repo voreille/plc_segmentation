@@ -16,7 +16,7 @@ params_ct = project_dir / "src/radiomics/parameters/param_CT.yaml"
 params_pt = project_dir / "src/radiomics/parameters/param_PT.yaml"
 data_path = project_dir / "data/interim/nii_resampled"
 
-DEBUG = True
+DEBUG = False
 
 
 def main():
@@ -112,7 +112,6 @@ def get_peritumoral_mask(
     image_pt,
     mask_gtvt,
     mask_lung,
-    dilation_radius=5,
 ):
 
     resampler = sitk.ResampleImageFilter()
@@ -128,7 +127,9 @@ def get_peritumoral_mask(
 
     gtvt = sitk.GetArrayFromImage(mask_gtvt)
     lung = (sitk.GetArrayFromImage(mask_lung) != 0) & (gtvt == 0)
-    gtvt_dilated = binary_dilation(gtvt, structure=sphere(dilation_radius))
+    gtvt_dilated = binary_dilation(gtvt, structure=sphere(5))
+    gtvt_dilated = ((gtvt_dilated == 0)
+                    & binary_dilation(gtvt_dilated, structure=sphere(5)))
     new_mask = ((gtvt_dilated != 0) & (lung != 0)).astype(np.uint32)
 
     output = sitk.GetImageFromArray(new_mask.astype(np.uint32))
