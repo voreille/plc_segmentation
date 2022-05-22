@@ -36,26 +36,35 @@ def get_lung_volume(patient, file, output_shape_image=None):
     return image, mask
 
 
-def generate_split(patient_list, clinical_info):
+def generate_split(
+    patient_list,
+    clinical_info,
+    only_chuv_test=False,
+):
     """
     The split are 50, 10, 46 for training, val and test
     in the val and test we have 50 - 50 PLC in the train 75 % 
     """
 
+    print(f"Generating Index with only_chuv_test: {only_chuv_test}")
     plc_pos_ids = [
-        p for p in patient_list if clinical_info.loc[p, "plc_status"] == 1
+        p for p in patient_list
+        if clinical_info.loc[p, "plc_status"] == 1 and (
+            clinical_info.loc[p, "is_chuv"] == 1 if only_chuv_test else True)
     ]
 
     plc_neg_ids = [
-        p for p in patient_list if clinical_info.loc[p, "plc_status"] == 0
+        p for p in patient_list
+        if clinical_info.loc[p, "plc_status"] == 0 and (
+            clinical_info.loc[p, "is_chuv"] == 1 if only_chuv_test else True)
     ]
     shuffle(plc_neg_ids)
     shuffle(plc_pos_ids)
 
     ids_test = plc_neg_ids[:23] + plc_pos_ids[:23]
     ids_val = plc_neg_ids[23:28] + plc_pos_ids[23:28]
-    ids_train = plc_neg_ids[28:] + plc_pos_ids[28:]
-
+    ids_train = [p for p in patient_list if p not in ids_test + ids_val]
+    print(f"Train: {len(ids_train)} Val: {len(ids_val)} Test: {len(ids_test)}")
     return ids_train, ids_val, ids_test
 
 

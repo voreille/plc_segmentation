@@ -1,5 +1,4 @@
 import tensorflow as tf
-import tensorflow.keras.backend as K
 from tensorflow_addons.utils.types import FloatTensorLike, TensorLike
 
 
@@ -32,8 +31,33 @@ class MaskedDiceLoss(tf.keras.losses.Loss):
         )) + self.w_gtvl * dice_loss(
             y_true[..., 1],
             y_true[..., 3] * y_pred[..., 1],
-            axis=(0, 1, 2),
+            spatial_axis=(0, 1, 2),
         )) / (self.w_gtvl + self.w_gtvt + self.w_lung)
+
+
+class DiceLoss(tf.keras.losses.Loss):
+
+    def __init__(self,
+                 loss_type="jaccard",
+                 smooth=1e-6,
+                 spatial_axis=(1, 2),
+                 reduction="mean",
+                 name="dice_loss"):
+        super().__init__(name=name)
+        self.loss_type = loss_type
+        self.smooth = smooth
+        self.spatial_axis = spatial_axis
+        self.reduction = reduction
+
+    def call(self, y_true, y_pred):
+        return dice_loss(
+            y_true,
+            y_pred,
+            loss_type=self.loss_type,
+            smooth=self.smooth,
+            spatial_axis=self.spatial_axis,
+            reduction=self.reduction,
+        )
 
 
 class CustomLoss(tf.keras.losses.Loss):
@@ -96,11 +120,11 @@ class CustomLoss(tf.keras.losses.Loss):
                 self.w_gtvl * l1) / (self.w_gtvl + self.w_gtvt + self.w_lung)
 
 
-def dice_coe_1_hard(y_true, y_pred, loss_type='sorensen', smooth=1e-6):
+def dice_coe_1_hard(y_true, y_pred, loss_type='sorensen', smooth=1e-6, spatial_axis=(1, 2)):
     return dice_coe_1(y_true,
                       tf.cast(y_pred > 0.5, tf.float32),
                       loss_type=loss_type,
-                      smooth=smooth)
+                      smooth=smooth, spatial_axis=spatial_axis)
 
 
 def dice_loss(
@@ -108,7 +132,7 @@ def dice_loss(
         y_pred,
         loss_type='jaccard',
         smooth=1e-6,
-        axis=(1, 2),
+        spatial_axis=(1, 2),
         reduction=None,
 ):
     l = 1 - dice_coe_1(
@@ -116,7 +140,7 @@ def dice_loss(
         y_pred,
         loss_type=loss_type,
         smooth=smooth,
-        axis=axis,
+        spatial_axis=spatial_axis,
     )
 
     if reduction == "mean":
@@ -125,17 +149,22 @@ def dice_loss(
     return l
 
 
-def dice_coe_1(y_true, y_pred, loss_type='jaccard', smooth=1e-6, axis=(1, 2)):
-    intersection = tf.reduce_sum(y_true * y_pred, axis=axis)
+def dice_coe_1(y_true,
+               y_pred,
+               loss_type='jaccard',
+               smooth=1e-6,
+               spatial_axis=(1, 2)):
+    intersection = tf.reduce_sum(y_true * y_pred, axis=spatial_axis)
     if loss_type == 'jaccard':
         union = tf.reduce_sum(
             tf.square(y_pred),
-            axis=axis,
-        ) + tf.reduce_sum(tf.square(y_true), axis=axis)
+            axis=spatial_axis,
+        ) + tf.reduce_sum(tf.square(y_true), axis=spatial_axis)
 
     elif loss_type == 'sorensen':
-        union = tf.reduce_sum(y_pred, axis=axis) + tf.reduce_sum(y_true,
-                                                                 axis=axis)
+        union = tf.reduce_sum(y_pred,
+                              axis=spatial_axis) + tf.reduce_sum(
+                                  y_true, axis=spatial_axis)
 
     else:
         raise ValueError("Unknown `loss_type`: %s" % loss_type)
@@ -146,29 +175,41 @@ def dice_coe_loss(y_true, y_pred, loss_type='jaccard', smooth=1e-6):
     return 1 - dice_coe(y_true, y_pred, loss_type=loss_type, smooth=smooth)
 
 
-def dice_coe_hard(y_true, y_pred, loss_type='sorensen', smooth=1e-6):
+def dice_coe_hard(y_true,
+                  y_pred,
+                  loss_type='sorensen',
+                  smooth=1e-6,
+                  spatial_axis=(1, 2)):
     return dice_coe(y_true,
                     tf.cast(y_pred > 0.5, tf.float32),
                     loss_type=loss_type,
-                    smooth=smooth)
+                    smooth=smooth,
+                    spatial_axis=spatial_axis)
 
 
-def dice_coe(y_true, y_pred, loss_type='jaccard', smooth=1e-6, axis=(1, 2)):
-    intersection = tf.reduce_sum(y_true * y_pred, axis=axis)
+def dice_coe(y_true,
+             y_pred,
+             loss_type='jaccard',
+             smooth=1e-6,
+             spatial_axis=(1, 2)):
+    intersection = tf.reduce_sum(y_true * y_pred, spatial_axis=spatial_axis)
     n_classes = y_pred.shape[-1]
     if loss_type == 'jaccard':
-        union = tf.reduce_sum(tf.square(y_pred), axis=axis) + tf.reduce_sum(
-            tf.square(y_true), axis=axis)
+        union = tf.reduce_sum(tf.square(y_pred),
+                              axis=spatial_axis) + tf.reduce_sum(
+                                  tf.square(y_true), axis=spatial_axis)
 
     elif loss_type == 'sorensen':
-        union = tf.reduce_sum(y_pred, axis=axis) + tf.reduce_sum(y_true,
-                                                                 axis=axis)
+        union = tf.reduce_sum(y_pred,
+                              axis=spatial_axis) + tf.reduce_sum(
+                                  y_true, axis=spatial_axis)
 
     else:
         raise ValueError("Unknown `loss_type`: %s" % loss_type)
     return tf.reduce_mean(
-        tf.reduce_sum((2. * intersection + smooth) /
-                      (union + smooth), axis=-1)) / n_classes
+        tf.reduce_sum(
+            (2. * intersection + smooth) /
+            (union + smooth), axis=-1)) / n_classes
 
 
 @tf.function

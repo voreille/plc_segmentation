@@ -13,12 +13,10 @@ output_path = project_dir / "data/splits.json"
 
 def main():
     clinical_df = pd.read_csv(
-        "/home/valentin/python_wkspce/plc_segmentation/data/clinical_info.csv"
-    ).set_index("patient_id")
+        project_dir /
+        "data/clinical_info_with_lung_info.csv").set_index("patient_id")
 
-    file = h5py.File(
-        "/home/valentin/python_wkspce/plc_segmentation/data/processed/hdf5_2d/data.hdf5",
-        "r")
+    file = h5py.File(project_dir / "data/processed/data.hdf5", "r")
     ids_list = list()
     patient_list = list(file.keys())
     file.close()
@@ -26,10 +24,11 @@ def main():
     # remove dupplicata, plc status is ok, but chuv status is not
     patient_list.remove("PatientLC_63")  # Just one lung
     patient_list.remove("PatientLC_71")  # the same as 69
-    patient_list.remove("PatientLC_21")  # the same as 20 
+    patient_list.remove("PatientLC_21")  # the same as 20
 
     for k in range(n_rep):
-        ids_train, ids_val, ids_test = generate_split(patient_list, clinical_df)
+        ids_train, ids_val, ids_test = generate_split(patient_list,
+                                                      clinical_df, only_chuv_test=True)
         ids_list.append({
             "train": ids_train,
             "val": ids_val,

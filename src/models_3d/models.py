@@ -127,15 +127,17 @@ class UnetRadiomics(tf.keras.Model):
             tf.keras.layers.Conv3D(12, 3, activation='linear', padding='SAME'),
             tf.keras.layers.BatchNormalization(),
             tf.keras.layers.ReLU(),
-            tf.keras.layers.Conv3D(output_channels,
-                                   1,
-                                   activation=last_activation,
-                                   padding='SAME'),
-        ])
+            tf.keras.layers.Conv3D(output_channels, 1, padding='SAME'),
+            tf.keras.layers.Activation(last_activation, dtype='float32'),
+        ], )
         self.radiomics = tf.keras.Sequential([
             tf.keras.layers.GlobalAveragePooling3D(),
-            tf.keras.layers.Dense(2, activation='softmax')
-        ])
+            tf.keras.layers.Dense(64),
+            tf.keras.layers.BatchNormalization(),
+            tf.keras.layers.ReLU(),
+            tf.keras.layers.Dense(1),
+            tf.keras.layers.Activation("sigmoid", dtype='float32'),
+        ], )
 
     def get_first_block(self, filters):
         return tf.keras.Sequential([
@@ -163,7 +165,10 @@ class UnetRadiomics(tf.keras.Model):
         for block, skip in zip(self.up_stack, skips):
             x = block((x, skip), training=training)
 
-        return self.last(x), self.radiomics(x_middle)
+        return {
+            "output_seg": self.last(x, training=training),
+            "output_plc": self.radiomics(x_middle, training=training)
+        }
 
 
 class UpBlock(tf.keras.layers.Layer):

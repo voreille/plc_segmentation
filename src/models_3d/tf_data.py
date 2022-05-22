@@ -21,11 +21,10 @@ def get_tf_data(
     oversample=False,
     patient_list=None,
     shuffle=False,
-    ct_clipping=[-1350, 150],
     num_parallel_calls=None,
-    return_segmentation=False,
     random_center=False,
     center_on="GTVtl",
+    return_gtvl=False,
 ):
     """mask: mask_gtvt, mask_gtvl, mask_lung1, mask_lung2
 
@@ -58,38 +57,36 @@ def get_tf_data(
         ds_neg = ds_neg.repeat()
         ds_pos = ds_pos.repeat()
 
-        patient_ds = tf.data.experimental.sample_from_datasets(
-            [ds_neg, ds_pos], weights=[0.5, 0.5])
+        patient_ds = tf.data.Dataset.sample_from_datasets([ds_neg, ds_pos],
+                                                          weights=[0.5, 0.5])
     else:
         patient_ds = tf.data.Dataset.from_tensor_slices(patient_list)
         if shuffle:
             patient_ds = patient_ds.shuffle(150)
 
     def f(patient):
-        if return_segmentation:
-            return _parse_image_segmentation(
-                patient,
-                clinical_df=clinical_df,
-                file=file,
-                output_image_shape=output_image_shape,
-                ct_clipping=ct_clipping,
-            )
-        else:
-            return _parse_image(
-                patient,
-                clinical_df=clinical_df,
-                file=file,
-                output_image_shape=output_image_shape,
-                ct_clipping=ct_clipping,
-                random_center=random_center,
-                center_on=center_on,
-            )
+        return _parse_image(
+            patient,
+            clinical_df=clinical_df,
+            file=file,
+            output_image_shape=output_image_shape,
+            random_center=random_center,
+            center_on=center_on,
+            return_gtvl=return_gtvl,
+        )
 
     def tf_parse_image(patient):
-        image, plc_status = tf.py_function(f, [patient],
-                                           [tf.float32, tf.float32])
+        image, mask, plc_status = tf.py_function(
+            f,
+            [patient],
+            [tf.float32, tf.float32, tf.float32],
+        )
         image.set_shape(output_image_shape + (2, ))
-        return image, plc_status
+        if return_gtvl:
+            mask.set_shape(output_image_shape + (2, ))
+        else:
+            mask.set_shape(output_image_shape + (1, ))
+        return image, mask, plc_status, patient
 
     out_ds = patient_ds.map(lambda p: tf_parse_image(p),
                             num_parallel_calls=num_parallel_calls)
@@ -102,9 +99,9 @@ def _parse_image(
     clinical_df=None,
     file=None,
     output_image_shape=None,
-    ct_clipping=[-1350, 150],
     random_center=False,
     center_on="GTVl",
+    return_gtvl=False,
 ):
     patient = patient.numpy().decode("utf-8")
     plc_status = int(clinical_df.loc[patient, "plc_status"])
@@ -122,24 +119,11 @@ def _parse_image(
 
     image = crop_image(image, origin, output_image_shape)
 
-    image = preprocess_image(
-        image,
-        ct_clipping=ct_clipping,
-        #  pet_mean=pet_mean,
-        # pet_std=pet_std,
-    )
-
-    return image, plc_status
-
-
-def _parse_image_segmentation(
-    patient,
-    clinical_df=None,
-    file=None,
-    output_image_shape=None,
-    ct_clipping=[-1350, 150],
-):
-    raise NotImplementedError("yo c'est pas implémenté")
+    if return_gtvl:
+        mask = crop_image(mask, origin, output_image_shape)[..., :2]
+    else:
+        mask = crop_image(mask, origin, output_image_shape)[..., :1]
+    return image, mask, plc_status
 
 
 def get_origin(output_image_shape, mask, random=False):
@@ -161,21 +145,6 @@ def get_origin(output_image_shape, mask, random=False):
             origin[k] = image_shape[k] - output_image_shape[k]
 
     return origin
-
-
-def clip(image, clipping=(-np.inf, np.inf)):
-    image[image < clipping[0]] = clipping[0]
-    image[image > clipping[1]] = clipping[1]
-    image = (2 * image - clipping[1] - clipping[0]) / (clipping[1] -
-                                                       clipping[0])
-    return image
-
-
-def preprocess_image(image, ct_clipping=(-1350, 250), pt_clipping=None):
-    image[..., 0] = clip(image[..., 0], clipping=ct_clipping)
-    if pt_clipping:
-        image[..., 0] = clip(image[..., 1], clipping=pt_clipping)
-    return image
 
 
 def get_bb_mask_voxel(mask):
